@@ -293,21 +293,30 @@ const styles = {
         margin: "6px 0 8px",
     },
     emptyState: {
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
         textAlign: "center",
-        padding: "20px 12px",
+        padding: "28px 20px 20px",
         color: "#9ca3af",
         fontSize: 12,
         lineHeight: 1.5,
     },
     kbd: {
-        display: "inline-block",
-        padding: "1px 5px",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        minWidth: 18,
+        height: 16,
+        padding: "0 5px",
         background: "rgba(255,255,255,0.08)",
         border: "1px solid rgba(255,255,255,0.12)",
         borderRadius: 4,
         fontSize: 10,
         fontFamily: "ui-monospace, monospace",
         color: "#d1d5db",
+        lineHeight: 1,
     },
 };
 function cornerToPos(corner) {
@@ -436,6 +445,10 @@ function Inner({ defaultCorner, pickerOptions, }) {
           0%, 100% { box-shadow: 0 10px 30px rgba(34,197,94,0.45), 0 2px 6px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.25), 0 0 0 0 rgba(34,197,94,0.5); }
           50%      { box-shadow: 0 10px 30px rgba(34,197,94,0.45), 0 2px 6px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.25), 0 0 0 10px rgba(34,197,94,0); }
         }
+        @keyframes pinsource-dot-pulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50%      { opacity: 0.55; transform: scale(1.35); }
+        }
         [data-pinsource] [data-icon-btn]:hover {
           background: rgba(255,255,255,0.08) !important;
           color: #e5e7eb !important;
@@ -453,16 +466,69 @@ function Inner({ defaultCorner, pickerOptions, }) {
         [data-pinsource] [data-fab]:active {
           transform: scale(0.96);
         }
-      ` }), _jsxs("div", { "data-pinsource": true, style: { ...styles.root, ...pos }, children: [open && (_jsxs("div", { style: styles.panel, "data-drag-ignore": true, children: [_jsxs("div", { style: styles.panelHeader, onPointerDown: handlePointerDown, onPointerMove: handlePointerMove, onPointerUp: handlePointerUp, children: [_jsx("span", { style: { color: "#6b7280" }, children: _jsx(DragHandleIcon, {}) }), _jsxs("span", { style: styles.panelTitle, children: [_jsx("span", { style: {
-                                                    width: 6,
-                                                    height: 6,
-                                                    borderRadius: "50%",
-                                                    background: picker.active ? "#22c55e" : hasSelection ? ACCENT : "#6b7280",
-                                                    boxShadow: picker.active ? "0 0 8px rgba(34,197,94,0.8)" : "none",
-                                                } }), "pinsource"] }), hasSelection && (_jsx("button", { "data-drag-ignore": true, "data-icon-btn": true, onClick: () => {
+      ` }), _jsxs("div", { "data-pinsource": true, style: { ...styles.root, ...pos }, children: [open && (_jsxs("div", { style: styles.panel, "data-drag-ignore": true, children: [_jsxs("div", { style: styles.panelHeader, onPointerDown: handlePointerDown, onPointerMove: handlePointerMove, onPointerUp: handlePointerUp, children: [_jsx("span", { style: { color: "#6b7280" }, children: _jsx(DragHandleIcon, {}) }), (() => {
+                                        const state = picker.active
+                                            ? "picking"
+                                            : hasSelection
+                                                ? "selected"
+                                                : "idle";
+                                        const dotColor = state === "picking" ? "#22c55e" : state === "selected" ? "#3b82f6" : "#6b7280";
+                                        const dotShadow = state === "picking"
+                                            ? "0 0 8px rgba(34,197,94,0.8)"
+                                            : state === "selected"
+                                                ? "0 0 6px rgba(59,130,246,0.6)"
+                                                : "none";
+                                        const label = state === "picking"
+                                            ? "picking…"
+                                            : state === "selected"
+                                                ? picker.componentLabel.replace(/[<>/\s]/g, "") || "pinsource"
+                                                : "pinsource";
+                                        const tooltip = state === "picking"
+                                            ? "Picker active — click any element to inspect it"
+                                            : state === "selected"
+                                                ? `Selected: ${picker.componentLabel || "element"}`
+                                                : "Idle — click the target button to pick an element";
+                                        return (_jsxs("span", { style: styles.panelTitle, title: tooltip, children: [_jsx("span", { style: {
+                                                        width: 6,
+                                                        height: 6,
+                                                        borderRadius: "50%",
+                                                        background: dotColor,
+                                                        boxShadow: dotShadow,
+                                                        animation: state === "picking"
+                                                            ? "pinsource-dot-pulse 1.4s ease-in-out infinite"
+                                                            : "none",
+                                                        flexShrink: 0,
+                                                    } }), _jsx("span", { style: {
+                                                        overflow: "hidden",
+                                                        textOverflow: "ellipsis",
+                                                        whiteSpace: "nowrap",
+                                                        fontFamily: state === "selected"
+                                                            ? "ui-monospace, SFMono-Regular, Menlo, monospace"
+                                                            : "inherit",
+                                                        fontSize: state === "selected" ? 11.5 : 12,
+                                                    }, children: label })] }));
+                                    })(), hasSelection && (_jsx("button", { "data-drag-ignore": true, "data-icon-btn": true, onClick: () => {
                                             picker.clearSelection();
                                             picker.togglePicker();
-                                        }, style: styles.iconButton, title: "Pick another element (\u2318\u21E7C)", children: _jsx(CrosshairIcon, { active: false, size: 13 }) })), _jsx("button", { "data-drag-ignore": true, "data-icon-btn": true, onClick: () => setOpen(false), style: styles.iconButton, title: "Close", children: _jsx(CloseIcon, {}) })] }), _jsxs("div", { style: styles.panelBody, children: [!hasSelection && !picker.active && (_jsxs("div", { style: styles.emptyState, children: [_jsx("div", { style: { opacity: 0.6, marginBottom: 10 }, children: _jsx(SparkIcon, { size: 28 }) }), _jsx("div", { style: { marginBottom: 14 }, children: "Pick any element on the page to inspect its component, source file, and styles." }), _jsxs("button", { "data-primary-action": true, onClick: picker.togglePicker, style: { ...styles.primaryAction, marginBottom: 12 }, children: [_jsx(CrosshairIcon, { active: false, size: 14 }), "Start picking"] }), _jsxs("div", { style: { fontSize: 10.5, color: "#6b7280" }, children: ["or press ", _jsx("span", { style: styles.kbd, children: "\u2318" }), " ", _jsx("span", { style: styles.kbd, children: "Shift" }), " ", _jsx("span", { style: styles.kbd, children: "C" })] })] })), picker.active && !hasSelection && (_jsxs("div", { style: styles.emptyState, children: [_jsx("div", { style: { color: "#22c55e", fontWeight: 600, marginBottom: 6 }, children: "Picking\u2026" }), _jsxs("div", { style: { fontSize: 11 }, children: ["Hover to highlight, click to select. Press ", _jsx("span", { style: styles.kbd, children: "Esc" }), " to cancel."] })] })), hasSelection && (_jsxs(_Fragment, { children: [_jsxs("div", { style: styles.card, children: [_jsx("div", { style: styles.label, children: "Component" }), _jsx("div", { style: { ...styles.valueMono, fontWeight: 600, color: "#f3f4f6" }, children: picker.componentLabel || "(unknown)" })] }), _jsxs("div", { style: styles.card, children: [_jsx("div", { style: styles.label, children: "Source file" }), _jsxs("div", { style: styles.valueMono, children: [sourceFileState === "found" && resolvedSourceFile, sourceFileState === "resolving" && (_jsx("span", { style: { color: "#6b7280", fontStyle: "italic" }, children: "resolving\u2026" })), sourceFileState === "unresolved" && (_jsxs("span", { style: { color: "#f59e0b" }, children: ["not found \u2014", " ", _jsxs("span", { style: { color: "#6b7280" }, children: ["is the server running? (", _jsx("code", { style: { color: "#9ca3af" }, children: "npx pinsource-server" }), ")"] })] }))] })] }), _jsxs("div", { style: styles.card, children: [_jsx("div", { style: styles.label, children: "Page" }), _jsx("div", { style: styles.valueMono, children: picker.pageFile || picker.pageRoute || "/" })] }), picker.componentChain.length > 1 && (_jsx(CollapsibleCard, { label: "Ancestor chain", count: picker.componentChain.length, children: _jsx("div", { style: styles.chainRow, children: picker.componentChain.join(" › ") }) }))] }))] }), hasSelection && (_jsxs("div", { style: styles.panelFooter, children: [_jsxs("div", { style: { display: "flex", gap: 4, alignItems: "center" }, children: [_jsxs("button", { "data-secondary-action": true, onClick: () => handleCopy("compact"), style: {
+                                        }, style: styles.iconButton, title: "Pick another element (\u2318\u21E7C)", children: _jsx(CrosshairIcon, { active: false, size: 13 }) })), _jsx("button", { "data-drag-ignore": true, "data-icon-btn": true, onClick: () => setOpen(false), style: styles.iconButton, title: "Close", children: _jsx(CloseIcon, {}) })] }), _jsxs("div", { style: styles.panelBody, children: [!hasSelection && !picker.active && (_jsxs("div", { style: styles.emptyState, children: [_jsx("div", { style: {
+                                                    display: "flex",
+                                                    alignItems: "center",
+                                                    justifyContent: "center",
+                                                    width: 48,
+                                                    height: 48,
+                                                    borderRadius: "50%",
+                                                    background: "rgba(255,255,255,0.04)",
+                                                    border: "1px solid rgba(255,255,255,0.06)",
+                                                    color: "#9ca3af",
+                                                    marginBottom: 14,
+                                                }, children: _jsx(SparkIcon, { size: 22 }) }), _jsx("div", { style: { marginBottom: 16, maxWidth: 240 }, children: "Pick any element on the page to inspect its component, source file, and styles." }), _jsxs("button", { "data-primary-action": true, onClick: picker.togglePicker, style: { ...styles.primaryAction, width: "100%", marginBottom: 10 }, children: [_jsx(CrosshairIcon, { active: false, size: 14 }), "Start picking"] }), _jsxs("div", { style: {
+                                                    display: "flex",
+                                                    alignItems: "center",
+                                                    justifyContent: "center",
+                                                    gap: 4,
+                                                    fontSize: 10.5,
+                                                    color: "#6b7280",
+                                                }, children: [_jsx("span", { children: "or press" }), _jsx("span", { style: styles.kbd, children: "\u2318" }), _jsx("span", { style: styles.kbd, children: "Shift" }), _jsx("span", { style: styles.kbd, children: "C" })] })] })), picker.active && !hasSelection && (_jsxs("div", { style: styles.emptyState, children: [_jsx("div", { style: { color: "#22c55e", fontWeight: 600, marginBottom: 6 }, children: "Picking\u2026" }), _jsxs("div", { style: { fontSize: 11 }, children: ["Hover to highlight, click to select. Press ", _jsx("span", { style: styles.kbd, children: "Esc" }), " to cancel."] })] })), hasSelection && (_jsxs(_Fragment, { children: [_jsxs("div", { style: styles.card, children: [_jsx("div", { style: styles.label, children: "Component" }), _jsx("div", { style: { ...styles.valueMono, fontWeight: 600, color: "#f3f4f6" }, children: picker.componentLabel || "(unknown)" })] }), _jsxs("div", { style: styles.card, children: [_jsx("div", { style: styles.label, children: "Source file" }), _jsxs("div", { style: styles.valueMono, children: [sourceFileState === "found" && resolvedSourceFile, sourceFileState === "resolving" && (_jsx("span", { style: { color: "#6b7280", fontStyle: "italic" }, children: "resolving\u2026" })), sourceFileState === "unresolved" && (_jsxs("span", { style: { color: "#f59e0b" }, children: ["not found \u2014", " ", _jsxs("span", { style: { color: "#6b7280" }, children: ["is the server running? (", _jsx("code", { style: { color: "#9ca3af" }, children: "npx pinsource-server" }), ")"] })] }))] })] }), _jsxs("div", { style: styles.card, children: [_jsx("div", { style: styles.label, children: "Page" }), _jsx("div", { style: styles.valueMono, children: picker.pageFile || picker.pageRoute || "/" })] }), picker.componentChain.length > 1 && (_jsx(CollapsibleCard, { label: "Ancestor chain", count: picker.componentChain.length, children: _jsx("div", { style: styles.chainRow, children: picker.componentChain.join(" › ") }) }))] }))] }), hasSelection && (_jsxs("div", { style: styles.panelFooter, children: [_jsxs("div", { style: { display: "flex", gap: 4, alignItems: "center" }, children: [_jsxs("button", { "data-secondary-action": true, onClick: () => handleCopy("compact"), style: {
                                                     ...styles.secondaryAction,
                                                     ...(copied === "compact" ? styles.secondaryActionSuccess : {}),
                                                     flex: 1,

@@ -391,21 +391,30 @@ const styles = {
     margin: "6px 0 8px",
   },
   emptyState: {
+    display: "flex",
+    flexDirection: "column" as const,
+    alignItems: "center",
+    justifyContent: "center",
     textAlign: "center" as const,
-    padding: "20px 12px",
+    padding: "28px 20px 20px",
     color: "#9ca3af",
     fontSize: 12,
     lineHeight: 1.5,
   },
   kbd: {
-    display: "inline-block",
-    padding: "1px 5px",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    minWidth: 18,
+    height: 16,
+    padding: "0 5px",
     background: "rgba(255,255,255,0.08)",
     border: "1px solid rgba(255,255,255,0.12)",
     borderRadius: 4,
     fontSize: 10,
     fontFamily: "ui-monospace, monospace",
     color: "#d1d5db",
+    lineHeight: 1,
   },
 };
 
@@ -566,6 +575,10 @@ function Inner({
           0%, 100% { box-shadow: 0 10px 30px rgba(34,197,94,0.45), 0 2px 6px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.25), 0 0 0 0 rgba(34,197,94,0.5); }
           50%      { box-shadow: 0 10px 30px rgba(34,197,94,0.45), 0 2px 6px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.25), 0 0 0 10px rgba(34,197,94,0); }
         }
+        @keyframes pinsource-dot-pulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50%      { opacity: 0.55; transform: scale(1.35); }
+        }
         [data-pinsource] [data-icon-btn]:hover {
           background: rgba(255,255,255,0.08) !important;
           color: #e5e7eb !important;
@@ -596,18 +609,65 @@ function Inner({
               <span style={{ color: "#6b7280" }}>
                 <DragHandleIcon />
               </span>
-              <span style={styles.panelTitle}>
-                <span
-                  style={{
-                    width: 6,
-                    height: 6,
-                    borderRadius: "50%",
-                    background: picker.active ? "#22c55e" : hasSelection ? ACCENT : "#6b7280",
-                    boxShadow: picker.active ? "0 0 8px rgba(34,197,94,0.8)" : "none",
-                  }}
-                />
-                pinsource
-              </span>
+              {(() => {
+                const state: "picking" | "selected" | "idle" = picker.active
+                  ? "picking"
+                  : hasSelection
+                  ? "selected"
+                  : "idle";
+                const dotColor =
+                  state === "picking" ? "#22c55e" : state === "selected" ? "#3b82f6" : "#6b7280";
+                const dotShadow =
+                  state === "picking"
+                    ? "0 0 8px rgba(34,197,94,0.8)"
+                    : state === "selected"
+                    ? "0 0 6px rgba(59,130,246,0.6)"
+                    : "none";
+                const label =
+                  state === "picking"
+                    ? "picking…"
+                    : state === "selected"
+                    ? picker.componentLabel.replace(/[<>/\s]/g, "") || "pinsource"
+                    : "pinsource";
+                const tooltip =
+                  state === "picking"
+                    ? "Picker active — click any element to inspect it"
+                    : state === "selected"
+                    ? `Selected: ${picker.componentLabel || "element"}`
+                    : "Idle — click the target button to pick an element";
+                return (
+                  <span style={styles.panelTitle} title={tooltip}>
+                    <span
+                      style={{
+                        width: 6,
+                        height: 6,
+                        borderRadius: "50%",
+                        background: dotColor,
+                        boxShadow: dotShadow,
+                        animation:
+                          state === "picking"
+                            ? "pinsource-dot-pulse 1.4s ease-in-out infinite"
+                            : "none",
+                        flexShrink: 0,
+                      }}
+                    />
+                    <span
+                      style={{
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        fontFamily:
+                          state === "selected"
+                            ? "ui-monospace, SFMono-Regular, Menlo, monospace"
+                            : "inherit",
+                        fontSize: state === "selected" ? 11.5 : 12,
+                      }}
+                    >
+                      {label}
+                    </span>
+                  </span>
+                );
+              })()}
               {hasSelection && (
                 <button
                   data-drag-ignore
@@ -636,23 +696,46 @@ function Inner({
             <div style={styles.panelBody}>
               {!hasSelection && !picker.active && (
                 <div style={styles.emptyState}>
-                  <div style={{ opacity: 0.6, marginBottom: 10 }}>
-                    <SparkIcon size={28} />
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: 48,
+                      height: 48,
+                      borderRadius: "50%",
+                      background: "rgba(255,255,255,0.04)",
+                      border: "1px solid rgba(255,255,255,0.06)",
+                      color: "#9ca3af",
+                      marginBottom: 14,
+                    }}
+                  >
+                    <SparkIcon size={22} />
                   </div>
-                  <div style={{ marginBottom: 14 }}>
+                  <div style={{ marginBottom: 16, maxWidth: 240 }}>
                     Pick any element on the page to inspect its component, source file, and styles.
                   </div>
                   <button
                     data-primary-action
                     onClick={picker.togglePicker}
-                    style={{ ...styles.primaryAction, marginBottom: 12 }}
+                    style={{ ...styles.primaryAction, width: "100%", marginBottom: 10 }}
                   >
                     <CrosshairIcon active={false} size={14} />
                     Start picking
                   </button>
-                  <div style={{ fontSize: 10.5, color: "#6b7280" }}>
-                    or press <span style={styles.kbd}>⌘</span>{" "}
-                    <span style={styles.kbd}>Shift</span>{" "}
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 4,
+                      fontSize: 10.5,
+                      color: "#6b7280",
+                    }}
+                  >
+                    <span>or press</span>
+                    <span style={styles.kbd}>⌘</span>
+                    <span style={styles.kbd}>Shift</span>
                     <span style={styles.kbd}>C</span>
                   </div>
                 </div>

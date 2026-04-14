@@ -31,6 +31,8 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
     "server": "node server/index.mjs",
+    "sync": "node scripts/sync-to-consumers.mjs",
+    "dev:sync": "node scripts/watch-and-sync.mjs",
     "prepublishOnly": "yarn build"
   },
   "peerDependencies": {
