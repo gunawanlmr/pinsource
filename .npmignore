@@ -1,0 +1,49 @@
+# NOTE: package.json `files` field is the source of truth for what's published.
+# This file is a secondary safety net for users who set `files` incorrectly or
+# rely on defaults.
+
+# Source (only compiled output in dist/ is shipped)
+src/
+tsconfig.json
+
+# Config
+.editorconfig
+.prettierrc*
+.eslintrc*
+eslint.config.*
+
+# Tests & fixtures
+__tests__/
+test/
+tests/
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+
+# CI / dev
+.github/
+.husky/
+.vscode/
+.idea/
+
+# Logs & caches
+*.log
+.npm/
+.cache/
+.parcel-cache/
+coverage/
+.nyc_output/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.*
+
+# Scratch
+.scratch/
+scratch/
+playground/

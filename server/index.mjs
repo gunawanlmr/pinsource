@@ -28,38 +28,108 @@ function json(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
+/**
+ * Resolve a component name to a file:line. Instead of stopping at the first
+ * grep hit, we collect ALL candidate definitions across the repo and score
+ * each one. The goal is to pick the actual definition over re-exports,
+ * imports, type-only declarations, and barrel files.
+ *
+ * Score rules (higher = more likely the real definition):
+ *   +10 `export default function Name`
+ *   +10 `export function Name(`
+ *   +9  `export const Name = (...) =>`   (likely arrow component)
+ *   +8  `const Name = React.memo(` / forwardRef(` / styled(`
+ *   +8  `export const Name = memo(` / forwardRef(`
+ *   +6  `function Name(` / `function Name<`
+ *   +5  `const Name =` / `const Name:`
+ *   +4  `class Name extends`
+ *   +3  Name.displayName = "Name"
+ *   +2  ends with `.tsx` / `.jsx`  (JSX-capable file)
+ *   +1  file path contains the component name (conventional filename)
+ *   -20 line is inside an `import` / re-export from a string source
+ *   -10 line starts with `export { Name`  (barrel re-export)
+ *   -10 file path contains `node_modules`
+ *   -5  file path contains `/__tests__/` or ends `.test.` or `.spec.`
+ *   -3  file path contains `/stories/` or ends `.stories.`
+ */
 function resolveComponent(name) {
   if (!name || !/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name)) return {};
-  const patterns = [
-    `function ${name}(`,
-    `function ${name}<`,
-    `const ${name} =`,
-    `const ${name}:`,
-    `const ${name}=`,
-    `export default ${name}`,
-    `export function ${name}`,
-    `export const ${name}`,
-  ];
-  const dirs = SEARCH_DIRS.map((d) => `"${d}"`).join(" ");
-  for (const pattern of patterns) {
-    try {
-      const raw = execSync(
-        `grep -rnF ${JSON.stringify(pattern)} --include="*.tsx" --include="*.ts" --include="*.jsx" --include="*.js" ${dirs} 2>/dev/null`,
-        { cwd: CWD, encoding: "utf8", timeout: 3000 },
-      ).trim();
-      if (!raw) continue;
-      const lines = raw.split("\n").filter((l) => {
-        const code = l.replace(/^[^:]+:\d+:/, "").trim();
-        return !code.startsWith("import ") && !code.startsWith("//") && !code.startsWith("*");
-      });
-      if (lines.length === 0) continue;
-      const m = lines[0].match(/^([^:]+):(\d+):/);
-      if (m) return { file: m[1], line: parseInt(m[2], 10) };
-    } catch {
-      // next pattern
-    }
+
+  const dirs = SEARCH_DIRS.map((d) => JSON.stringify(d)).join(" ");
+  // Use a word-boundary regex so we don't match substrings (e.g. `Button` matching `IconButton`).
+  // BSD grep (macOS) supports -E for extended regex.
+  const pattern = `[^A-Za-z0-9_$]${name}[^A-Za-z0-9_$]|^${name}[^A-Za-z0-9_$]|[^A-Za-z0-9_$]${name}$`;
+
+  let raw = "";
+  try {
+    raw = execSync(
+      `grep -rnE ${JSON.stringify(pattern)} --include="*.tsx" --include="*.ts" --include="*.jsx" --include="*.js" --exclude-dir=node_modules --exclude-dir=.next --exclude-dir=dist --exclude-dir=build ${dirs} 2>/dev/null`,
+      { cwd: CWD, encoding: "utf8", timeout: 4000, maxBuffer: 10 * 1024 * 1024 },
+    ).trim();
+  } catch {
+    return {};
   }
-  return {};
+  if (!raw) return {};
+
+  const candidates = [];
+  for (const hit of raw.split("\n")) {
+    const m = hit.match(/^([^:]+):(\d+):(.*)$/);
+    if (!m) continue;
+    const [, file, lineStr, rawCode] = m;
+    const line = parseInt(lineStr, 10);
+    const code = rawCode.trim();
+
+    // Quick filters: comments, empty lines.
+    if (!code || code.startsWith("//") || code.startsWith("*") || code.startsWith("/*")) continue;
+
+    let score = 0;
+
+    // Definition patterns.
+    const defPatterns = [
+      { re: new RegExp(`^export\\s+default\\s+function\\s+${name}\\b`), w: 10 },
+      { re: new RegExp(`^export\\s+function\\s+${name}\\b`), w: 10 },
+      { re: new RegExp(`^export\\s+const\\s+${name}\\s*[:=]`), w: 9 },
+      { re: new RegExp(`^const\\s+${name}\\s*=\\s*(?:React\\.)?memo\\b`), w: 8 },
+      { re: new RegExp(`^const\\s+${name}\\s*=\\s*(?:React\\.)?forwardRef\\b`), w: 8 },
+      { re: new RegExp(`^const\\s+${name}\\s*=\\s*styled\\b`), w: 8 },
+      { re: new RegExp(`^export\\s+const\\s+${name}\\s*=\\s*(?:React\\.)?memo\\b`), w: 8 },
+      { re: new RegExp(`^export\\s+const\\s+${name}\\s*=\\s*(?:React\\.)?forwardRef\\b`), w: 8 },
+      { re: new RegExp(`^function\\s+${name}\\b`), w: 6 },
+      { re: new RegExp(`^const\\s+${name}\\s*[:=]`), w: 5 },
+      { re: new RegExp(`^class\\s+${name}\\s+extends\\b`), w: 4 },
+      { re: new RegExp(`^${name}\\.displayName\\s*=`), w: 3 },
+      { re: new RegExp(`^export\\s+default\\s+${name}\\b`), w: 2 },
+    ];
+    for (const { re, w } of defPatterns) {
+      if (re.test(code)) {
+        score += w;
+        break;
+      }
+    }
+
+    // Heavy penalties for imports / barrel re-exports.
+    if (/^import\b/.test(code)) score -= 20;
+    if (/^export\s*\{.*\bfrom\b/.test(code)) score -= 15;
+    if (new RegExp(`^export\\s*\\{[^}]*\\b${name}\\b`).test(code)) score -= 8;
+    if (/\bfrom\s+['"]/.test(code)) score -= 5;
+
+    // Path-based nudges.
+    if (file.endsWith(".tsx") || file.endsWith(".jsx")) score += 2;
+    if (file.split("/").some((part) => part === `${name}.tsx` || part === `${name}.ts` || part === `${name}.jsx` || part === `${name}.js`)) {
+      score += 3;
+    }
+    if (file.includes("/__tests__/") || /\.(test|spec)\.[tj]sx?$/.test(file)) score -= 5;
+    if (file.includes("/stories/") || /\.stories\.[tj]sx?$/.test(file)) score -= 3;
+    if (file.includes("/node_modules/")) score -= 10;
+    if (file.includes("/.next/")) score -= 10;
+
+    if (score > 0) candidates.push({ file, line, code, score });
+  }
+
+  if (candidates.length === 0) return {};
+  candidates.sort((a, b) => b.score - a.score || a.file.localeCompare(b.file) || a.line - b.line);
+  const best = candidates[0];
+  return { file: best.file, line: best.line };
 }
 
 function resolvePage(route) {

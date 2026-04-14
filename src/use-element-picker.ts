@@ -17,32 +17,133 @@ const DEFAULT_SKIP = new Set([
 
 const WRAPPER_PATTERNS = /Boundary|Wrapper|Provider|Layout|Context|Fallback|Guard|Gate|Handler|Manager|Loader|Inner$/;
 
-function getComponentName(fiber: { type?: unknown } | null | undefined): string {
-  if (!fiber?.type) return "";
-  if (typeof fiber.type === "string") return "";
-  const t = fiber.type as { displayName?: string; name?: string };
-  return t.displayName || t.name || "";
+/**
+ * Unwrap React.memo / forwardRef / lazy / HOC wrappers to find the underlying
+ * component, so that displayName/name reflects the real definition.
+ */
+function unwrapType(type: unknown): unknown {
+  if (!type) return type;
+  let current: unknown = type;
+  // React.memo: { $$typeof: Symbol(react.memo), type: <inner> }
+  // React.forwardRef: { $$typeof: Symbol(react.forward_ref), render: <fn> }
+  // React.lazy: { $$typeof: Symbol(react.lazy), _payload, _init }
+  for (let i = 0; i < 8; i++) {
+    const obj = current as Record<string, unknown> | null | undefined;
+    if (!obj || typeof obj !== "object") break;
+    if (typeof obj.type === "object" || typeof obj.type === "function") {
+      current = obj.type;
+      continue;
+    }
+    if (typeof obj.render === "function") {
+      current = obj.render;
+      continue;
+    }
+    if (obj._payload && typeof (obj._payload as { _result?: unknown })._result !== "undefined") {
+      current = (obj._payload as { _result: unknown })._result;
+      continue;
+    }
+    break;
+  }
+  return current;
 }
 
-function getReactComponentNames(el: HTMLElement, skip: Set<string>): string[] {
-  const names: string[] = [];
+function getComponentName(fiber: { type?: unknown; elementType?: unknown } | null | undefined): string {
+  if (!fiber) return "";
+  const raw = fiber.elementType ?? fiber.type;
+  if (!raw) return "";
+  if (typeof raw === "string") return "";
+  const t = raw as { displayName?: string; name?: string };
+  if (t.displayName) return t.displayName;
+  if (t.name) return t.name;
+  const inner = unwrapType(raw) as { displayName?: string; name?: string } | null | undefined;
+  return inner?.displayName || inner?.name || "";
+}
+
+interface DebugSource {
+  fileName?: string;
+  lineNumber?: number;
+  columnNumber?: number;
+}
+
+interface FiberLike {
+  type?: unknown;
+  elementType?: unknown;
+  return?: FiberLike | null;
+  _debugSource?: DebugSource;
+  _debugOwner?: FiberLike | null;
+}
+
+/**
+ * Format a Babel debug source into a "path:line" string, stripping absolute
+ * project prefixes so the output is the same as what the grep resolver
+ * returns (project-relative).
+ */
+function formatDebugSource(src: DebugSource): string {
+  if (!src.fileName) return "";
+  let file = src.fileName;
+  // Common webpack/next prefix: "webpack-internal:///" or "(turbopack)/"
+  file = file.replace(/^webpack-internal:\/\/\/(?:\(.*?\)\/)?/, "");
+  file = file.replace(/^\(turbopack\)\//, "");
+  file = file.replace(/^file:\/\//, "");
+  // Strip everything up to and including a `/src/` or project-root-ish marker.
+  // Heuristic: if path contains /app/, /components/, /src/, /pages/, trim to that.
+  const markers = ["/app/", "/components/", "/handlers/", "/lib/", "/src/", "/pages/"];
+  for (const m of markers) {
+    const idx = file.indexOf(m);
+    if (idx > 0) {
+      file = file.slice(idx + 1);
+      break;
+    }
+  }
+  return src.lineNumber ? `${file}:${src.lineNumber}` : file;
+}
+
+function getDebugSource(fiber: FiberLike | null | undefined): DebugSource | null {
+  if (!fiber) return null;
+  if (fiber._debugSource?.fileName) return fiber._debugSource;
+  return null;
+}
+
+function getFiberFromElement(el: HTMLElement): FiberLike | null {
+  const fiberKey = Object.keys(el).find(
+    (k) => k.startsWith("__reactFiber$") || k.startsWith("__reactInternalInstance$"),
+  );
+  if (!fiberKey) return null;
+  return (el as unknown as Record<string, FiberLike | undefined>)[fiberKey] ?? null;
+}
+
+export interface FiberComponent {
+  name: string;
+  /** File + line from Babel jsx-dev-runtime / @babel/plugin-transform-react-jsx-source, if available. */
+  debugSource: DebugSource | null;
+}
+
+/**
+ * Walk the fiber ancestor chain and collect each meaningful component along with
+ * its embedded Babel debug source (if the bundler injected it, which is the case
+ * for Next.js dev, Vite dev, CRA dev, etc.).
+ */
+function collectFiberComponents(el: HTMLElement, skip: Set<string>): FiberComponent[] {
+  const out: FiberComponent[] = [];
   try {
-    const fiberKey = Object.keys(el).find(
-      (k) => k.startsWith("__reactFiber$") || k.startsWith("__reactInternalInstance$"),
-    );
-    if (!fiberKey) return names;
-    let fiber = (el as unknown as Record<string, { type?: unknown; return?: unknown }>)[fiberKey];
-    for (let depth = 0; depth < 60 && fiber; depth++) {
+    let fiber: FiberLike | null = getFiberFromElement(el);
+    for (let depth = 0; depth < 80 && fiber; depth++) {
       const name = getComponentName(fiber);
       if (name && !name.startsWith("_") && !skip.has(name) && name.length > 1) {
-        if (names.length === 0 || names[names.length - 1] !== name) names.push(name);
+        if (out.length === 0 || out[out.length - 1].name !== name) {
+          out.push({ name, debugSource: getDebugSource(fiber) });
+        } else if (!out[out.length - 1].debugSource) {
+          // Fill in source if the later occurrence has it and the earlier didn't.
+          const existing = getDebugSource(fiber);
+          if (existing) out[out.length - 1].debugSource = existing;
+        }
       }
-      fiber = (fiber as { return?: { type?: unknown; return?: unknown } }).return as never;
+      fiber = fiber.return ?? null;
     }
   } catch {
     // ignore
   }
-  return names;
+  return out;
 }
 
 function getReactSourceLabel(names: string[]): string {
@@ -52,6 +153,9 @@ function getReactSourceLabel(names: string[]): string {
 }
 
 const NON_VISUAL_TAGS = new Set(["script", "style", "noscript", "head", "meta", "link", "title", "template"]);
+
+/** Marker written to `sourceFile` when resolution completes but finds nothing. */
+export const UNRESOLVED_SENTINEL = "__pinsource_unresolved__";
 
 function getElementPath(el: HTMLElement): string {
   const parts: string[] = [];
@@ -153,8 +257,22 @@ export function useElementPicker(options: DevToolsOptions = {}) {
       const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
       if (!el || isInsideDevtools(el)) return;
 
-      const names = getReactComponentNames(el, skipSet.current);
+      const components = collectFiberComponents(el, skipSet.current);
+      const names = components.map((c) => c.name);
       const route = window.location.pathname;
+
+      // Prefer the first non-wrapper component as the "primary" hit.
+      const primaryIdx = Math.max(
+        0,
+        components.findIndex((c) => !WRAPPER_PATTERNS.test(c.name)),
+      );
+      const primary = components[primaryIdx];
+
+      // If Babel injected _debugSource, we already have the exact file + line —
+      // no grep needed. This is the most accurate path.
+      const debugFile = primary?.debugSource?.fileName
+        ? formatDebugSource(primary.debugSource)
+        : "";
 
       setState({
         ...EMPTY_STATE,
@@ -162,6 +280,7 @@ export function useElementPicker(options: DevToolsOptions = {}) {
         elementPath: getElementPath(el),
         componentLabel: getReactSourceLabel(names),
         componentChain: names,
+        sourceFile: debugFile,
         pageRoute: route,
         tag: el.tagName.toLowerCase(),
         styles: getKeyStyles(el),
@@ -170,20 +289,34 @@ export function useElementPicker(options: DevToolsOptions = {}) {
       });
 
       (async () => {
-        const sortedNames = [
-          ...names.filter((n) => !WRAPPER_PATTERNS.test(n)),
-          ...names.filter((n) => WRAPPER_PATTERNS.test(n)),
-        ];
-        for (const name of sortedNames) {
-          const file = await resolveComponentFile(name, serverUrl);
-          if (file) {
-            setState((s) => ({ ...s, sourceFile: file }));
-            break;
+        // If we already have an accurate debug source, skip the grep resolver.
+        if (!debugFile) {
+          const ordered = [
+            ...components.filter((c) => !WRAPPER_PATTERNS.test(c.name)),
+            ...components.filter((c) => WRAPPER_PATTERNS.test(c.name)),
+          ];
+          let resolved = "";
+          for (const comp of ordered) {
+            if (comp.debugSource?.fileName) {
+              resolved = formatDebugSource(comp.debugSource);
+              break;
+            }
+            const file = await resolveComponentFile(comp.name, serverUrl);
+            if (file) {
+              resolved = file;
+              break;
+            }
           }
+          // Always exit the "resolving…" state, even if nothing was found.
+          // Using a sentinel so the UI can render a clear message.
+          setState((s) => ({
+            ...s,
+            sourceFile: resolved || UNRESOLVED_SENTINEL,
+          }));
         }
         if (route) {
           const pf = await resolvePageFile(route, serverUrl);
-          if (pf) setState((s) => ({ ...s, pageFile: pf }));
+          setState((s) => ({ ...s, pageFile: pf || s.pageFile }));
         }
       })();
 

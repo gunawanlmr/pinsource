@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { useElementPicker } from "./use-element-picker";
+import { captureElement, type ScreenshotResult } from "./screenshot";
+import { UNRESOLVED_SENTINEL, useElementPicker } from "./use-element-picker";
 import type { DevToolsOptions, PickedElement } from "./types";
 
 /**
@@ -107,10 +108,82 @@ function SparkIcon({ size = 18 }: { size?: number }) {
   );
 }
 
+function CameraIcon({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none">
+      <rect x="1.5" y="4" width="13" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M5 4l1-1.5h4L11 4" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+      <circle cx="8" cy="8.5" r="2.5" stroke="currentColor" strokeWidth="1.3" />
+    </svg>
+  );
+}
+
 function CloseIcon({ size = 14 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none">
       <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function CollapsibleCard({
+  label,
+  count,
+  defaultOpen = false,
+  children,
+}: {
+  label: string;
+  count?: number;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div style={styles.card}>
+      <button
+        data-secondary-action
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          width: "100%",
+          padding: 0,
+          background: "transparent",
+          border: "none",
+          color: "#6b7280",
+          cursor: "pointer",
+          fontFamily: "inherit",
+        }}
+      >
+        <span style={{ color: "#6b7280" }}><ChevronIcon open={open} /></span>
+        <span style={{ ...styles.label, marginBottom: 0, flex: 1, textAlign: "left" }}>
+          {label}
+        </span>
+        {typeof count === "number" && (
+          <span style={{ fontSize: 10, color: "#6b7280", fontFamily: "ui-monospace, monospace" }}>
+            {count}
+          </span>
+        )}
+      </button>
+      {open && <div style={{ marginTop: 6 }}>{children}</div>}
+    </div>
+  );
+}
+
+function ChevronIcon({ open, size = 12 }: { open: boolean; size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 12 12"
+      fill="none"
+      style={{
+        transition: "transform 0.15s ease",
+        transform: open ? "rotate(90deg)" : "rotate(0deg)",
+      }}
+    >
+      <path d="M4.5 3l3 3-3 3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -185,6 +258,10 @@ const styles = {
   },
   panel: {
     width: 320,
+    maxWidth: "calc(100vw - 24px)",
+    maxHeight: "calc(100vh - 88px)",
+    display: "flex",
+    flexDirection: "column" as const,
     background: "rgba(20,20,24,0.98)",
     border: "1px solid rgba(255,255,255,0.08)",
     borderRadius: 14,
@@ -214,8 +291,15 @@ const styles = {
   },
   panelBody: {
     padding: 10,
-    maxHeight: 480,
+    flex: 1,
+    minHeight: 0,
     overflowY: "auto" as const,
+  },
+  panelFooter: {
+    flexShrink: 0,
+    padding: "8px 10px",
+    borderTop: "1px solid rgba(255,255,255,0.06)",
+    background: "rgba(255,255,255,0.02)",
   },
   iconButton: {
     width: 26,
@@ -359,24 +443,37 @@ function Inner({
 }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState<"full" | "compact" | null>(null);
+  const [shotStatus, setShotStatus] = useState<
+    | { state: "idle" }
+    | { state: "capturing" }
+    | { state: "done"; result: ScreenshotResult }
+  >({ state: "idle" });
   const [pos, setPos] = useState<{ top?: number; left?: number; right?: number; bottom?: number }>(
     cornerToPos(defaultCorner),
   );
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
   const picker = useElementPicker(pickerOptions);
 
+  const resolvedSourceFile = picker.sourceFile === UNRESOLVED_SENTINEL ? "" : picker.sourceFile;
+  const sourceFileState: "resolving" | "found" | "unresolved" =
+    picker.sourceFile === UNRESOLVED_SENTINEL
+      ? "unresolved"
+      : picker.sourceFile
+      ? "found"
+      : "resolving";
+
   const picked: PickedElement = useMemo(
     () => ({
       elementPath: picker.elementPath,
       componentLabel: picker.componentLabel,
       componentChain: picker.componentChain,
-      sourceFile: picker.sourceFile,
+      sourceFile: resolvedSourceFile,
       pageRoute: picker.pageRoute,
       pageFile: picker.pageFile,
       tag: picker.tag,
       styles: picker.styles,
     }),
-    [picker],
+    [picker, resolvedSourceFile],
   );
 
   const hasSelection = !!picker.selectedElement;
@@ -418,6 +515,18 @@ function Inner({
       }
     },
     [hasSelection, picked],
+  );
+
+  const handleScreenshot = useCallback(
+    async (forceDownload = false) => {
+      if (!picker.selectedElement) return;
+      setShotStatus({ state: "capturing" });
+      const label = picker.componentLabel.replace(/[<>/\s]/g, "") || "element";
+      const result = await captureElement(picker.selectedElement, { label, forceDownload });
+      setShotStatus({ state: "done", result });
+      setTimeout(() => setShotStatus({ state: "idle" }), 2200);
+    },
+    [picker.selectedElement, picker.componentLabel],
   );
 
   useEffect(() => {
@@ -570,8 +679,17 @@ function Inner({
                   <div style={styles.card}>
                     <div style={styles.label}>Source file</div>
                     <div style={styles.valueMono}>
-                      {picker.sourceFile || (
+                      {sourceFileState === "found" && resolvedSourceFile}
+                      {sourceFileState === "resolving" && (
                         <span style={{ color: "#6b7280", fontStyle: "italic" }}>resolving…</span>
+                      )}
+                      {sourceFileState === "unresolved" && (
+                        <span style={{ color: "#f59e0b" }}>
+                          not found —{" "}
+                          <span style={{ color: "#6b7280" }}>
+                            is the server running? (<code style={{ color: "#9ca3af" }}>npx pinsource-server</code>)
+                          </span>
+                        </span>
                       )}
                     </div>
                   </div>
@@ -584,48 +702,103 @@ function Inner({
                   </div>
 
                   {picker.componentChain.length > 1 && (
-                    <div style={styles.card}>
-                      <div style={styles.label}>Ancestor chain</div>
-                      <div style={styles.chainRow}>{picker.componentChain.join(" › ")}</div>
-                    </div>
+                    <CollapsibleCard
+                      label="Ancestor chain"
+                      count={picker.componentChain.length}
+                    >
+                      <div style={styles.chainRow}>
+                        {picker.componentChain.join(" › ")}
+                      </div>
+                    </CollapsibleCard>
                   )}
-
-                  <div style={styles.divider} />
-
-                  <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                    <button
-                      data-secondary-action
-                      onClick={() => handleCopy("compact")}
-                      style={{
-                        ...styles.secondaryAction,
-                        ...(copied === "compact" ? styles.secondaryActionSuccess : {}),
-                        flex: 1,
-                        padding: "6px 8px",
-                        fontSize: 11,
-                        fontWeight: 600,
-                      }}
-                      title="Copy @file references"
-                    >
-                      <CopyIcon copied={copied === "compact"} size={11} />
-                      {copied === "compact" ? "Copied" : "Copy source"}
-                    </button>
-                    <button
-                      data-secondary-action
-                      onClick={() => handleCopy("full")}
-                      style={{
-                        ...styles.secondaryAction,
-                        ...(copied === "full" ? styles.secondaryActionSuccess : {}),
-                        padding: "6px 8px",
-                        fontSize: 11,
-                      }}
-                      title="Copy full prompt block (component, file refs, chain, styles)"
-                    >
-                      {copied === "full" ? "Copied" : "Full prompt"}
-                    </button>
-                  </div>
                 </>
               )}
             </div>
+
+            {hasSelection && (
+              <div style={styles.panelFooter}>
+                <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                  <button
+                    data-secondary-action
+                    onClick={() => handleCopy("compact")}
+                    style={{
+                      ...styles.secondaryAction,
+                      ...(copied === "compact" ? styles.secondaryActionSuccess : {}),
+                      flex: 1,
+                      padding: "7px 8px",
+                      fontSize: 11,
+                      fontWeight: 600,
+                    }}
+                    title="Copy @file references"
+                  >
+                    <CopyIcon copied={copied === "compact"} size={11} />
+                    {copied === "compact" ? "Copied" : "Copy source"}
+                  </button>
+                  <button
+                    data-secondary-action
+                    onClick={() => handleCopy("full")}
+                    style={{
+                      ...styles.secondaryAction,
+                      ...(copied === "full" ? styles.secondaryActionSuccess : {}),
+                      padding: "7px 8px",
+                      fontSize: 11,
+                    }}
+                    title="Copy full prompt block (component, file refs, chain, styles)"
+                  >
+                    {copied === "full" ? "Copied" : "Full prompt"}
+                  </button>
+                  <button
+                    data-secondary-action
+                    onClick={(e) => handleScreenshot(e.shiftKey)}
+                    disabled={shotStatus.state === "capturing"}
+                    style={{
+                      ...styles.secondaryAction,
+                      ...(shotStatus.state === "done" && shotStatus.result.kind !== "error"
+                        ? styles.secondaryActionSuccess
+                        : {}),
+                      padding: "7px 8px",
+                      width: 34,
+                      justifyContent: "center",
+                      opacity: shotStatus.state === "capturing" ? 0.6 : 1,
+                    }}
+                    title={
+                      shotStatus.state === "done" && shotStatus.result.kind === "copied"
+                        ? "Screenshot copied to clipboard"
+                        : shotStatus.state === "done" && shotStatus.result.kind === "downloaded"
+                        ? `Saved ${shotStatus.result.filename}`
+                        : shotStatus.state === "done" && shotStatus.result.kind === "error"
+                        ? `Failed: ${shotStatus.result.reason}`
+                        : "Screenshot element (Shift-click to download)"
+                    }
+                  >
+                    {shotStatus.state === "capturing" ? (
+                      <span style={{ fontSize: 10 }}>…</span>
+                    ) : shotStatus.state === "done" && shotStatus.result.kind !== "error" ? (
+                      <CopyIcon copied size={11} />
+                    ) : (
+                      <CameraIcon size={12} />
+                    )}
+                  </button>
+                </div>
+                {shotStatus.state === "done" && (
+                  <div
+                    style={{
+                      marginTop: 6,
+                      fontSize: 10.5,
+                      color:
+                        shotStatus.result.kind === "error"
+                          ? "#f87171"
+                          : "#86efac",
+                      textAlign: "center",
+                    }}
+                  >
+                    {shotStatus.result.kind === "copied" && "📋 Screenshot copied to clipboard"}
+                    {shotStatus.result.kind === "downloaded" && `💾 Downloaded ${shotStatus.result.filename}`}
+                    {shotStatus.result.kind === "error" && `Capture failed: ${shotStatus.result.reason}`}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 

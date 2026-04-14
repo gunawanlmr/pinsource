@@ -1,7 +1,8 @@
 "use client";
 import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useElementPicker } from "./use-element-picker";
+import { captureElement } from "./screenshot";
+import { UNRESOLVED_SENTINEL, useElementPicker } from "./use-element-picker";
 /**
  * Build an AI-ready prompt block. Claude (or any LLM agent) can paste this
  * directly and immediately act on it:
@@ -76,8 +77,32 @@ function CrosshairIcon({ active, size = 16 }) {
 function SparkIcon({ size = 18 }) {
     return (_jsx("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", children: _jsx("path", { d: "M12 3l2.09 5.26L19 10.18l-4.09 2.93L16 18.36 12 15.77 8 18.36l1.09-5.25L5 10.18l4.91-1.92L12 3z", stroke: "currentColor", strokeWidth: "1.5", strokeLinejoin: "round" }) }));
 }
+function CameraIcon({ size = 13 }) {
+    return (_jsxs("svg", { width: size, height: size, viewBox: "0 0 16 16", fill: "none", children: [_jsx("rect", { x: "1.5", y: "4", width: "13", height: "9", rx: "1.5", stroke: "currentColor", strokeWidth: "1.3" }), _jsx("path", { d: "M5 4l1-1.5h4L11 4", stroke: "currentColor", strokeWidth: "1.3", strokeLinejoin: "round" }), _jsx("circle", { cx: "8", cy: "8.5", r: "2.5", stroke: "currentColor", strokeWidth: "1.3" })] }));
+}
 function CloseIcon({ size = 14 }) {
     return (_jsx("svg", { width: size, height: size, viewBox: "0 0 16 16", fill: "none", children: _jsx("path", { d: "M3.5 3.5l9 9M12.5 3.5l-9 9", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" }) }));
+}
+function CollapsibleCard({ label, count, defaultOpen = false, children, }) {
+    const [open, setOpen] = useState(defaultOpen);
+    return (_jsxs("div", { style: styles.card, children: [_jsxs("button", { "data-secondary-action": true, onClick: () => setOpen((v) => !v), style: {
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    width: "100%",
+                    padding: 0,
+                    background: "transparent",
+                    border: "none",
+                    color: "#6b7280",
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                }, children: [_jsx("span", { style: { color: "#6b7280" }, children: _jsx(ChevronIcon, { open: open }) }), _jsx("span", { style: { ...styles.label, marginBottom: 0, flex: 1, textAlign: "left" }, children: label }), typeof count === "number" && (_jsx("span", { style: { fontSize: 10, color: "#6b7280", fontFamily: "ui-monospace, monospace" }, children: count }))] }), open && _jsx("div", { style: { marginTop: 6 }, children: children })] }));
+}
+function ChevronIcon({ open, size = 12 }) {
+    return (_jsx("svg", { width: size, height: size, viewBox: "0 0 12 12", fill: "none", style: {
+            transition: "transform 0.15s ease",
+            transform: open ? "rotate(90deg)" : "rotate(0deg)",
+        }, children: _jsx("path", { d: "M4.5 3l3 3-3 3", stroke: "currentColor", strokeWidth: "1.4", strokeLinecap: "round", strokeLinejoin: "round" }) }));
 }
 function DragHandleIcon({ size = 12 }) {
     return (_jsxs("svg", { width: size, height: size, viewBox: "0 0 12 12", fill: "none", children: [_jsx("circle", { cx: "3", cy: "3", r: "1", fill: "currentColor" }), _jsx("circle", { cx: "9", cy: "3", r: "1", fill: "currentColor" }), _jsx("circle", { cx: "3", cy: "6", r: "1", fill: "currentColor" }), _jsx("circle", { cx: "9", cy: "6", r: "1", fill: "currentColor" }), _jsx("circle", { cx: "3", cy: "9", r: "1", fill: "currentColor" }), _jsx("circle", { cx: "9", cy: "9", r: "1", fill: "currentColor" })] }));
@@ -135,6 +160,10 @@ const styles = {
     },
     panel: {
         width: 320,
+        maxWidth: "calc(100vw - 24px)",
+        maxHeight: "calc(100vh - 88px)",
+        display: "flex",
+        flexDirection: "column",
         background: "rgba(20,20,24,0.98)",
         border: "1px solid rgba(255,255,255,0.08)",
         borderRadius: 14,
@@ -164,8 +193,15 @@ const styles = {
     },
     panelBody: {
         padding: 10,
-        maxHeight: 480,
+        flex: 1,
+        minHeight: 0,
         overflowY: "auto",
+    },
+    panelFooter: {
+        flexShrink: 0,
+        padding: "8px 10px",
+        borderTop: "1px solid rgba(255,255,255,0.06)",
+        background: "rgba(255,255,255,0.02)",
     },
     iconButton: {
         width: 26,
@@ -296,19 +332,26 @@ export default function Pinsource(props = {}) {
 function Inner({ defaultCorner, pickerOptions, }) {
     const [open, setOpen] = useState(false);
     const [copied, setCopied] = useState(null);
+    const [shotStatus, setShotStatus] = useState({ state: "idle" });
     const [pos, setPos] = useState(cornerToPos(defaultCorner));
     const dragRef = useRef(null);
     const picker = useElementPicker(pickerOptions);
+    const resolvedSourceFile = picker.sourceFile === UNRESOLVED_SENTINEL ? "" : picker.sourceFile;
+    const sourceFileState = picker.sourceFile === UNRESOLVED_SENTINEL
+        ? "unresolved"
+        : picker.sourceFile
+            ? "found"
+            : "resolving";
     const picked = useMemo(() => ({
         elementPath: picker.elementPath,
         componentLabel: picker.componentLabel,
         componentChain: picker.componentChain,
-        sourceFile: picker.sourceFile,
+        sourceFile: resolvedSourceFile,
         pageRoute: picker.pageRoute,
         pageFile: picker.pageFile,
         tag: picker.tag,
         styles: picker.styles,
-    }), [picker]);
+    }), [picker, resolvedSourceFile]);
     const hasSelection = !!picker.selectedElement;
     const handlePointerDown = (e) => {
         if (e.target.closest("[data-drag-ignore]"))
@@ -349,6 +392,15 @@ function Inner({ defaultCorner, pickerOptions, }) {
             setCopied(null);
         }
     }, [hasSelection, picked]);
+    const handleScreenshot = useCallback(async (forceDownload = false) => {
+        if (!picker.selectedElement)
+            return;
+        setShotStatus({ state: "capturing" });
+        const label = picker.componentLabel.replace(/[<>/\s]/g, "") || "element";
+        const result = await captureElement(picker.selectedElement, { label, forceDownload });
+        setShotStatus({ state: "done", result });
+        setTimeout(() => setShotStatus({ state: "idle" }), 2200);
+    }, [picker.selectedElement, picker.componentLabel]);
     useEffect(() => {
         const onKey = (e) => {
             if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "c") {
@@ -410,19 +462,41 @@ function Inner({ defaultCorner, pickerOptions, }) {
                                                 } }), "pinsource"] }), hasSelection && (_jsx("button", { "data-drag-ignore": true, "data-icon-btn": true, onClick: () => {
                                             picker.clearSelection();
                                             picker.togglePicker();
-                                        }, style: styles.iconButton, title: "Pick another element (\u2318\u21E7C)", children: _jsx(CrosshairIcon, { active: false, size: 13 }) })), _jsx("button", { "data-drag-ignore": true, "data-icon-btn": true, onClick: () => setOpen(false), style: styles.iconButton, title: "Close", children: _jsx(CloseIcon, {}) })] }), _jsxs("div", { style: styles.panelBody, children: [!hasSelection && !picker.active && (_jsxs("div", { style: styles.emptyState, children: [_jsx("div", { style: { opacity: 0.6, marginBottom: 10 }, children: _jsx(SparkIcon, { size: 28 }) }), _jsx("div", { style: { marginBottom: 14 }, children: "Pick any element on the page to inspect its component, source file, and styles." }), _jsxs("button", { "data-primary-action": true, onClick: picker.togglePicker, style: { ...styles.primaryAction, marginBottom: 12 }, children: [_jsx(CrosshairIcon, { active: false, size: 14 }), "Start picking"] }), _jsxs("div", { style: { fontSize: 10.5, color: "#6b7280" }, children: ["or press ", _jsx("span", { style: styles.kbd, children: "\u2318" }), " ", _jsx("span", { style: styles.kbd, children: "Shift" }), " ", _jsx("span", { style: styles.kbd, children: "C" })] })] })), picker.active && !hasSelection && (_jsxs("div", { style: styles.emptyState, children: [_jsx("div", { style: { color: "#22c55e", fontWeight: 600, marginBottom: 6 }, children: "Picking\u2026" }), _jsxs("div", { style: { fontSize: 11 }, children: ["Hover to highlight, click to select. Press ", _jsx("span", { style: styles.kbd, children: "Esc" }), " to cancel."] })] })), hasSelection && (_jsxs(_Fragment, { children: [_jsxs("div", { style: styles.card, children: [_jsx("div", { style: styles.label, children: "Component" }), _jsx("div", { style: { ...styles.valueMono, fontWeight: 600, color: "#f3f4f6" }, children: picker.componentLabel || "(unknown)" })] }), _jsxs("div", { style: styles.card, children: [_jsx("div", { style: styles.label, children: "Source file" }), _jsx("div", { style: styles.valueMono, children: picker.sourceFile || (_jsx("span", { style: { color: "#6b7280", fontStyle: "italic" }, children: "resolving\u2026" })) })] }), _jsxs("div", { style: styles.card, children: [_jsx("div", { style: styles.label, children: "Page" }), _jsx("div", { style: styles.valueMono, children: picker.pageFile || picker.pageRoute || "/" })] }), picker.componentChain.length > 1 && (_jsxs("div", { style: styles.card, children: [_jsx("div", { style: styles.label, children: "Ancestor chain" }), _jsx("div", { style: styles.chainRow, children: picker.componentChain.join(" › ") })] })), _jsx("div", { style: styles.divider }), _jsxs("div", { style: { display: "flex", gap: 4, alignItems: "center" }, children: [_jsxs("button", { "data-secondary-action": true, onClick: () => handleCopy("compact"), style: {
-                                                            ...styles.secondaryAction,
-                                                            ...(copied === "compact" ? styles.secondaryActionSuccess : {}),
-                                                            flex: 1,
-                                                            padding: "6px 8px",
-                                                            fontSize: 11,
-                                                            fontWeight: 600,
-                                                        }, title: "Copy @file references", children: [_jsx(CopyIcon, { copied: copied === "compact", size: 11 }), copied === "compact" ? "Copied" : "Copy source"] }), _jsx("button", { "data-secondary-action": true, onClick: () => handleCopy("full"), style: {
-                                                            ...styles.secondaryAction,
-                                                            ...(copied === "full" ? styles.secondaryActionSuccess : {}),
-                                                            padding: "6px 8px",
-                                                            fontSize: 11,
-                                                        }, title: "Copy full prompt block (component, file refs, chain, styles)", children: copied === "full" ? "Copied" : "Full prompt" })] })] }))] })] })), _jsxs("button", { "data-fab": true, "aria-label": picker.active
+                                        }, style: styles.iconButton, title: "Pick another element (\u2318\u21E7C)", children: _jsx(CrosshairIcon, { active: false, size: 13 }) })), _jsx("button", { "data-drag-ignore": true, "data-icon-btn": true, onClick: () => setOpen(false), style: styles.iconButton, title: "Close", children: _jsx(CloseIcon, {}) })] }), _jsxs("div", { style: styles.panelBody, children: [!hasSelection && !picker.active && (_jsxs("div", { style: styles.emptyState, children: [_jsx("div", { style: { opacity: 0.6, marginBottom: 10 }, children: _jsx(SparkIcon, { size: 28 }) }), _jsx("div", { style: { marginBottom: 14 }, children: "Pick any element on the page to inspect its component, source file, and styles." }), _jsxs("button", { "data-primary-action": true, onClick: picker.togglePicker, style: { ...styles.primaryAction, marginBottom: 12 }, children: [_jsx(CrosshairIcon, { active: false, size: 14 }), "Start picking"] }), _jsxs("div", { style: { fontSize: 10.5, color: "#6b7280" }, children: ["or press ", _jsx("span", { style: styles.kbd, children: "\u2318" }), " ", _jsx("span", { style: styles.kbd, children: "Shift" }), " ", _jsx("span", { style: styles.kbd, children: "C" })] })] })), picker.active && !hasSelection && (_jsxs("div", { style: styles.emptyState, children: [_jsx("div", { style: { color: "#22c55e", fontWeight: 600, marginBottom: 6 }, children: "Picking\u2026" }), _jsxs("div", { style: { fontSize: 11 }, children: ["Hover to highlight, click to select. Press ", _jsx("span", { style: styles.kbd, children: "Esc" }), " to cancel."] })] })), hasSelection && (_jsxs(_Fragment, { children: [_jsxs("div", { style: styles.card, children: [_jsx("div", { style: styles.label, children: "Component" }), _jsx("div", { style: { ...styles.valueMono, fontWeight: 600, color: "#f3f4f6" }, children: picker.componentLabel || "(unknown)" })] }), _jsxs("div", { style: styles.card, children: [_jsx("div", { style: styles.label, children: "Source file" }), _jsxs("div", { style: styles.valueMono, children: [sourceFileState === "found" && resolvedSourceFile, sourceFileState === "resolving" && (_jsx("span", { style: { color: "#6b7280", fontStyle: "italic" }, children: "resolving\u2026" })), sourceFileState === "unresolved" && (_jsxs("span", { style: { color: "#f59e0b" }, children: ["not found \u2014", " ", _jsxs("span", { style: { color: "#6b7280" }, children: ["is the server running? (", _jsx("code", { style: { color: "#9ca3af" }, children: "npx pinsource-server" }), ")"] })] }))] })] }), _jsxs("div", { style: styles.card, children: [_jsx("div", { style: styles.label, children: "Page" }), _jsx("div", { style: styles.valueMono, children: picker.pageFile || picker.pageRoute || "/" })] }), picker.componentChain.length > 1 && (_jsx(CollapsibleCard, { label: "Ancestor chain", count: picker.componentChain.length, children: _jsx("div", { style: styles.chainRow, children: picker.componentChain.join(" › ") }) }))] }))] }), hasSelection && (_jsxs("div", { style: styles.panelFooter, children: [_jsxs("div", { style: { display: "flex", gap: 4, alignItems: "center" }, children: [_jsxs("button", { "data-secondary-action": true, onClick: () => handleCopy("compact"), style: {
+                                                    ...styles.secondaryAction,
+                                                    ...(copied === "compact" ? styles.secondaryActionSuccess : {}),
+                                                    flex: 1,
+                                                    padding: "7px 8px",
+                                                    fontSize: 11,
+                                                    fontWeight: 600,
+                                                }, title: "Copy @file references", children: [_jsx(CopyIcon, { copied: copied === "compact", size: 11 }), copied === "compact" ? "Copied" : "Copy source"] }), _jsx("button", { "data-secondary-action": true, onClick: () => handleCopy("full"), style: {
+                                                    ...styles.secondaryAction,
+                                                    ...(copied === "full" ? styles.secondaryActionSuccess : {}),
+                                                    padding: "7px 8px",
+                                                    fontSize: 11,
+                                                }, title: "Copy full prompt block (component, file refs, chain, styles)", children: copied === "full" ? "Copied" : "Full prompt" }), _jsx("button", { "data-secondary-action": true, onClick: (e) => handleScreenshot(e.shiftKey), disabled: shotStatus.state === "capturing", style: {
+                                                    ...styles.secondaryAction,
+                                                    ...(shotStatus.state === "done" && shotStatus.result.kind !== "error"
+                                                        ? styles.secondaryActionSuccess
+                                                        : {}),
+                                                    padding: "7px 8px",
+                                                    width: 34,
+                                                    justifyContent: "center",
+                                                    opacity: shotStatus.state === "capturing" ? 0.6 : 1,
+                                                }, title: shotStatus.state === "done" && shotStatus.result.kind === "copied"
+                                                    ? "Screenshot copied to clipboard"
+                                                    : shotStatus.state === "done" && shotStatus.result.kind === "downloaded"
+                                                        ? `Saved ${shotStatus.result.filename}`
+                                                        : shotStatus.state === "done" && shotStatus.result.kind === "error"
+                                                            ? `Failed: ${shotStatus.result.reason}`
+                                                            : "Screenshot element (Shift-click to download)", children: shotStatus.state === "capturing" ? (_jsx("span", { style: { fontSize: 10 }, children: "\u2026" })) : shotStatus.state === "done" && shotStatus.result.kind !== "error" ? (_jsx(CopyIcon, { copied: true, size: 11 })) : (_jsx(CameraIcon, { size: 12 })) })] }), shotStatus.state === "done" && (_jsxs("div", { style: {
+                                            marginTop: 6,
+                                            fontSize: 10.5,
+                                            color: shotStatus.result.kind === "error"
+                                                ? "#f87171"
+                                                : "#86efac",
+                                            textAlign: "center",
+                                        }, children: [shotStatus.result.kind === "copied" && "📋 Screenshot copied to clipboard", shotStatus.result.kind === "downloaded" && `💾 Downloaded ${shotStatus.result.filename}`, shotStatus.result.kind === "error" && `Capture failed: ${shotStatus.result.reason}`] }))] }))] })), _jsxs("button", { "data-fab": true, "aria-label": picker.active
                             ? "Cancel picking"
                             : open
                                 ? "Pick another element"
