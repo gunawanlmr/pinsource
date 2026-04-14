@@ -1,0 +1,65 @@
+{
+  "name": "pinsource",
+  "version": "0.1.0",
+  "description": "Pin any UI element in your running web app to its source file. A floating in-browser devtool that resolves the React/Vite/Next component, file path, and route — then copies a structured reference block.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./loader": {
+      "types": "./dist/loader.d.ts",
+      "import": "./dist/loader.js"
+    },
+    "./server": "./server/index.mjs"
+  },
+  "bin": {
+    "pinsource-server": "./server/index.mjs"
+  },
+  "files": [
+    "dist",
+    "server",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "server": "node server/index.mjs",
+    "prepublishOnly": "yarn build"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "typescript": "^5.4.0"
+  },
+  "keywords": [
+    "devtools",
+    "react",
+    "vite",
+    "nextjs",
+    "element-picker",
+    "source-path",
+    "fiber",
+    "developer-tools"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gunawanlmr/pinsource"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
