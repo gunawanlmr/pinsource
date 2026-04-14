@@ -55,6 +55,9 @@ desktop.ini
 !.env.example
 .envrc
 
+# npm auth — never commit
+.npmrc
+
 # Coverage & test output
 coverage/
 .nyc_output/

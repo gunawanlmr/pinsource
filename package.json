@@ -16,7 +16,9 @@
       "types": "./dist/loader.d.ts",
       "import": "./dist/loader.js"
     },
-    "./server": "./server/index.mjs"
+    "./server": "./server/index.mjs",
+    "./next-route": "./server/next-route.mjs",
+    "./vite-plugin": "./server/vite-plugin.mjs"
   },
   "bin": {
     "pinsource-server": "./server/index.mjs"
