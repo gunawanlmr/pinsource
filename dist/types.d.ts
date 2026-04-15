@@ -1,3 +1,11 @@
+export interface SourceCandidate {
+    /** Component name at this level, or "(clicked)" for the host JSX site. */
+    name: string;
+    /** `path:line` relative to project root. */
+    file: string;
+    /** Higher = more likely to be the useful "composing" component. */
+    score: number;
+}
 export interface PickedElement {
     /** CSS-selector-like path from <body> to the element. */
     elementPath: string;
@@ -5,8 +13,15 @@ export interface PickedElement {
     componentLabel: string;
     /** Ancestor component chain (nearest → outermost). */
     componentChain: string[];
-    /** Resolved source file + line, e.g. "components/ui/button.tsx:42". */
+    /** Resolved source file + line, e.g. "components/ui/button.tsx:42". Best pick out of the candidates. */
     sourceFile: string;
+    /**
+     * All resolved sources along the ancestor chain, sorted from highest-level
+     * (page, section) to lowest (atomic primitive). Lets consumers show context
+     * like "FeatureCard → Card → primitives/Card.tsx" when the primary pick
+     * is too atomic to be useful.
+     */
+    sourceCandidates: SourceCandidate[];
     /** Current window.location.pathname. */
     pageRoute: string;
     /** Resolved page file, e.g. "app/(root)/search/page.tsx". */

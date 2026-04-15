@@ -87,7 +87,14 @@ function formatForCopy(p: PickedElement): string {
   const page = p.pageFile ? `@${p.pageFile}` : "(unresolved)";
 
   const refs: string[] = [];
-  if (p.sourceFile) refs.push(`- ${primary}  ← component definition`);
+  if (p.sourceFile) refs.push(`- ${primary}  ← best match (composing component)`);
+  // Surface every other candidate so the model can jump up/down the tree
+  // if the "best" pick happens to be an atomic primitive or a wrapper.
+  if (p.sourceCandidates && p.sourceCandidates.length > 1) {
+    for (const c of p.sourceCandidates.slice(1, 4)) {
+      refs.push(`- @${c.file}  ← ${c.name}`);
+    }
+  }
   if (p.pageFile) refs.push(`- ${page}  ← page where it was picked`);
 
   const chain = p.componentChain.length > 0
@@ -124,15 +131,63 @@ function formatForCopy(p: PickedElement): string {
 }
 
 /** Minimal copy: just the file references, for quick @-mentions in chat. */
+/**
+ * Compact copy format optimized for LLM parsing.
+ *
+ * Design principles:
+ *  - **Fenced block** — clear start/end so the model doesn't mix it with
+ *    surrounding prose in a chat message.
+ *  - **Stable key/value pairs** — one field per line, `key: value`, lower-case
+ *    keys, no padding. Easy to tokenize; easy for tools to regex.
+ *  - **File refs as bare `path:line`** — the format Cursor, VS Code CLI,
+ *    Claude Code, and grep-style tools natively understand. No `@` prefix
+ *    which confuses some parsers.
+ *  - **Ancestor chain included** when useful — gives the model a fallback
+ *    grep target if the resolved file turns out to be wrong.
+ *  - **Short and deterministic** — every field is a single line; missing
+ *    fields are simply omitted (no "(unknown)" placeholders).
+ *
+ * Example output:
+ *
+ * ```pinsource
+ * component: TableCell
+ * tag: td
+ * route: /leaderboard
+ * source: src/components/ui/table.tsx:71
+ * page: app/leaderboard/page.tsx
+ * chain: TableCell > TableRow > Table
+ * dom: main > div.panel > table > tbody > tr > td.cell
+ * ```
+ */
 function formatCompactCopy(p: PickedElement): string {
-  const componentName = p.componentLabel.replace(/[<>/\s]/g, "") || "(unknown)";
-  const lines: string[] = [`${componentName}:`];
-  if (p.sourceFile) lines.push(`  @${p.sourceFile}`);
-  if (p.pageFile) lines.push(`  @${p.pageFile}`);
-  if (!p.sourceFile && !p.pageFile && p.componentChain.length > 0) {
-    lines.push(`  (unresolved — grep for ${p.componentChain[0]})`);
+  const componentName = p.componentLabel.replace(/[<>/\s]/g, "") || "unknown";
+  const fields: string[] = [`component: ${componentName}`];
+  if (p.tag && p.tag !== componentName.toLowerCase()) fields.push(`tag: ${p.tag}`);
+  if (p.pageRoute) fields.push(`route: ${p.pageRoute}`);
+
+  // "source:" is the best-scored candidate (page-level when possible).
+  // "sources:" lists every level — so when the best pick is still too atomic,
+  // the consuming LLM can walk up to the composing component itself.
+  if (p.sourceFile) fields.push(`source: ${p.sourceFile}`);
+  if (p.pageFile) fields.push(`page: ${p.pageFile}`);
+
+  if (p.sourceCandidates && p.sourceCandidates.length > 1) {
+    // Cap at 4 to keep the block tight. Already sorted page-level → atomic.
+    const rows = p.sourceCandidates
+      .slice(0, 4)
+      .map((c) => `  - ${c.name}: ${c.file}`);
+    fields.push("sources:");
+    fields.push(...rows);
   }
-  return lines.join("\n");
+
+  if (p.componentChain.length > 1) {
+    fields.push(`chain: ${p.componentChain.slice(0, 5).join(" > ")}`);
+  }
+  if (p.elementPath) fields.push(`dom: ${p.elementPath}`);
+  if (!p.sourceFile && p.componentChain.length > 0) {
+    fields.push(`hint: source unresolved — grep for ${p.componentChain[0]}`);
+  }
+  return ["```pinsource", ...fields, "```"].join("\n");
 }
 
 function CopyIcon({ copied, size = 14 }: { copied: boolean; size?: number }) {
@@ -546,6 +601,7 @@ function Inner({
       componentLabel: picker.componentLabel,
       componentChain: picker.componentChain,
       sourceFile: resolvedSourceFile,
+      sourceCandidates: picker.sourceCandidates,
       pageRoute: picker.pageRoute,
       pageFile: picker.pageFile,
       tag: picker.tag,

@@ -1,4 +1,4 @@
-import type { DevToolsOptions } from "./types";
+import type { DevToolsOptions, SourceCandidate as PublicSourceCandidate } from "./types";
 interface DebugSource {
     fileName?: string;
     lineNumber?: number;
@@ -21,6 +21,7 @@ export declare function useElementPicker(options?: DevToolsOptions): {
     componentLabel: string;
     componentChain: string[];
     sourceFile: string;
+    sourceCandidates: PublicSourceCandidate[];
     pageRoute: string;
     pageFile: string;
     tag: string;

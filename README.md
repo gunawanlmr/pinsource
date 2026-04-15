@@ -133,13 +133,19 @@ Or bake it into your dev script:
 
 ### Output shapes
 
-**`Copy source`** — compact `@file:line` refs, perfect for chat and PRs:
+**`Copy source`** — LLM-optimized fenced block. Every field is `key: value` on its own line, file refs use the `path:line` format that editors and CLIs open natively. Drop it into Claude, Cursor, ChatGPT, or a PR comment and any tool can parse it:
 
+````
+```pinsource
+component: ChatInput
+tag: textarea
+route: /chat
+source: app/chat/components/ChatInput.tsx:14
+page: app/chat/page.tsx
+chain: ChatInput > ChatComposer > ChatSession
+dom: main > div.composer > textarea.input
 ```
-ChatInput:
-  @app/chat/components/ChatInput.tsx:14
-  @app/chat/page.tsx
-```
+````
 
 **`Full prompt`** — structured block with context, for AI assistants:
 

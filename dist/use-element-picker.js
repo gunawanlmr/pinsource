@@ -62,26 +62,57 @@ function getComponentName(fiber) {
  * Format a Babel debug source into a "path:line" string, stripping absolute
  * project prefixes so the output is the same as what the grep resolver
  * returns (project-relative).
+ *
+ * Previously this trimmed at the *first* occurrence of a marker directory
+ * like `/app/` or `/src/` — which is wrong when the absolute path itself
+ * contains one of those names (e.g. `/Users/me/app-projects/site/src/X.tsx`
+ * would be mis-trimmed at the leading `/app-`). We now trim at the *last*
+ * occurrence, which is the one closest to the file — guaranteed to be the
+ * real project-relative boundary.
  */
 function formatDebugSource(src) {
     if (!src.fileName)
         return "";
     let file = src.fileName;
-    // Common webpack/next prefix: "webpack-internal:///" or "(turbopack)/"
     file = file.replace(/^webpack-internal:\/\/\/(?:\(.*?\)\/)?/, "");
     file = file.replace(/^\(turbopack\)\//, "");
+    file = file.replace(/^rsc:\/\//, "");
     file = file.replace(/^file:\/\//, "");
-    // Strip everything up to and including a `/src/` or project-root-ish marker.
-    // Heuristic: if path contains /app/, /components/, /src/, /pages/, trim to that.
-    const markers = ["/app/", "/components/", "/handlers/", "/lib/", "/src/", "/pages/"];
+    // Find the *last* occurrence of any project-root marker. Using lastIndexOf
+    // rather than indexOf means the stripping survives paths that embed a
+    // marker name elsewhere (e.g. usernames, monorepo parent dirs).
+    const markers = ["/app/", "/components/", "/handlers/", "/lib/", "/src/", "/pages/", "/hooks/", "/utils/", "/features/"];
+    let bestIdx = -1;
     for (const m of markers) {
-        const idx = file.indexOf(m);
-        if (idx > 0) {
-            file = file.slice(idx + 1);
-            break;
-        }
+        const idx = file.lastIndexOf(m);
+        if (idx > bestIdx)
+            bestIdx = idx;
     }
+    if (bestIdx > 0)
+        file = file.slice(bestIdx + 1);
+    // Strip any remaining leading absolute-path noise by dropping everything
+    // before the first `./` if present (esbuild, some webpack configs).
+    file = file.replace(/^.*?[?&]?file=/, "");
+    file = file.replace(/\?.*$/, ""); // drop querystrings like `?t=123`
     return src.lineNumber ? `${file}:${src.lineNumber}` : file;
+}
+/**
+ * Collapse a list of file:line strings — sometimes the fiber chain surfaces
+ * the same file twice (host element + its component). Keep the first
+ * occurrence only.
+ */
+function isLikelyProjectFile(file) {
+    if (!file)
+        return false;
+    if (file.includes("/node_modules/"))
+        return false;
+    if (file.startsWith("node:"))
+        return false;
+    if (file.includes("react-dom"))
+        return false;
+    if (file.includes("next/dist/"))
+        return false;
+    return true;
 }
 function getDebugSource(fiber) {
     if (!fiber)
@@ -125,6 +156,114 @@ function collectFiberComponents(el, skip) {
         // ignore
     }
     return out;
+}
+/**
+ * Heuristics for "where is this actually from?" when a click lands on a
+ * deeply-nested atomic primitive (e.g. `<TableCell />` inside a
+ * `LeaderboardTable` inside a page).
+ *
+ * Returning just the atomic source is technically correct but unhelpful —
+ * users want the *composing* component (the one that assembles the primitive
+ * into a real UI surface). We score each candidate and return them sorted so
+ * the caller can pick the best, or show both.
+ *
+ * Score signals (higher is more app-level, lower is more primitive):
+ *   +20 path contains `/app/`, `/pages/` (Next app or pages route file)
+ *   +12 path contains `/features/`, `/screens/`, `/sections/`
+ *   +8  path matches the current page route segment
+ *   +6  file name ends in `Page.tsx`, `Screen.tsx`, `Section.tsx`, `View.tsx`
+ *   +2  component name equals file basename (canonical component file)
+ *   -15 path contains `/components/ui/`, `/components/primitives/`, `/ui/`
+ *   -10 path contains `/node_modules/`
+ *   -5  file name is a single generic word (Button, Card, Input, etc.)
+ */
+const ATOMIC_NAMES = new Set([
+    "Button", "Input", "Label", "Badge", "Avatar", "Icon", "Card", "Chip",
+    "Tag", "Pill", "Switch", "Checkbox", "Radio", "Select", "Textarea",
+    "Slider", "Tooltip", "Popover", "Dialog", "Modal", "Sheet", "Drawer",
+    "Tabs", "Tab", "Accordion", "AccordionItem", "Table", "TableRow",
+    "TableCell", "TableHeader", "TableBody", "Th", "Td", "Tr",
+    "Separator", "Divider", "Spinner", "Skeleton", "Progress",
+    "Image", "Link", "Text", "Heading", "Paragraph",
+]);
+function scoreSource(name, file, currentRoute) {
+    let score = 0;
+    const lower = file.toLowerCase();
+    if (lower.includes("/app/") || lower.includes("/pages/"))
+        score += 20;
+    if (lower.includes("/features/") || lower.includes("/screens/") || lower.includes("/sections/"))
+        score += 12;
+    if (currentRoute) {
+        const firstSeg = currentRoute.split("/").filter(Boolean)[0];
+        if (firstSeg && lower.includes(`/${firstSeg}/`))
+            score += 8;
+    }
+    if (/(?:Page|Screen|Section|View)\.[tj]sx?$/i.test(file))
+        score += 6;
+    const basename = file.split("/").pop()?.replace(/\.[tj]sx?$/, "") || "";
+    if (basename && basename === name)
+        score += 2;
+    if (lower.includes("/components/ui/") || lower.includes("/components/primitives/") || /\/ui\//.test(lower))
+        score -= 15;
+    if (lower.includes("/node_modules/"))
+        score -= 10;
+    if (ATOMIC_NAMES.has(name))
+        score -= 5;
+    return score;
+}
+/**
+ * Collect every (name, source) candidate along the fiber ancestor chain and
+ * score them by how "page-level" they are. Returns the best primary match
+ * plus every other candidate, sorted desc.
+ *
+ * The list is the real value — even when `primary` is picked wrong, the
+ * caller can offer the user a jumplist of "this → containing component →
+ * page" for context.
+ */
+function collectSourceCandidates(el, skip, currentRoute) {
+    const out = [];
+    const seen = new Set();
+    const pushCandidate = (name, src) => {
+        if (!src)
+            return;
+        const file = formatDebugSource(src);
+        if (!file || !isLikelyProjectFile(file))
+            return;
+        const key = `${name}|${file}`;
+        if (seen.has(key))
+            return;
+        seen.add(key);
+        out.push({ name, file, score: scoreSource(name, file, currentRoute) });
+    };
+    try {
+        let fiber = getFiberFromElement(el);
+        // The host fiber's own _debugSource is the exact JSX site of the clicked
+        // element. Its _debugOwner is the component that rendered that JSX — we
+        // surface both.
+        if (fiber?._debugSource)
+            pushCandidate("(clicked)", fiber._debugSource);
+        if (fiber?._debugOwner?._debugSource) {
+            const ownerName = getComponentName(fiber._debugOwner) || "(owner)";
+            pushCandidate(ownerName, fiber._debugOwner._debugSource);
+        }
+        for (let depth = 0; depth < 80 && fiber; depth++) {
+            const name = getComponentName(fiber);
+            if (name && !name.startsWith("_") && !skip.has(name) && name.length > 1) {
+                pushCandidate(name, fiber._debugSource);
+                if (fiber._debugOwner?._debugSource) {
+                    const ownerName = getComponentName(fiber._debugOwner) || "";
+                    if (ownerName && !skip.has(ownerName)) {
+                        pushCandidate(ownerName, fiber._debugOwner._debugSource);
+                    }
+                }
+            }
+            fiber = fiber.return ?? null;
+        }
+    }
+    catch {
+        // ignore
+    }
+    return out.sort((a, b) => b.score - a.score);
 }
 function getReactSourceLabel(names) {
     if (names.length === 0)
@@ -186,6 +325,7 @@ const EMPTY_STATE = {
     componentLabel: "",
     componentChain: [],
     sourceFile: "",
+    sourceCandidates: [],
     pageRoute: "",
     pageFile: "",
     tag: "",
@@ -242,14 +382,13 @@ export function useElementPicker(options = {}) {
         const components = collectFiberComponents(el, skipSet.current);
         const names = components.map((c) => c.name);
         const route = window.location.pathname;
-        // Prefer the first non-wrapper component as the "primary" hit.
-        const primaryIdx = Math.max(0, components.findIndex((c) => !WRAPPER_PATTERNS.test(c.name)));
-        const primary = components[primaryIdx];
-        // If Babel injected _debugSource, we already have the exact file + line —
-        // no grep needed. This is the most accurate path.
-        const debugFile = primary?.debugSource?.fileName
-            ? formatDebugSource(primary.debugSource)
-            : "";
+        // Collect every usable source along the chain and score them — the best
+        // one (highest-level, page-aware, not an atomic primitive) becomes
+        // `sourceFile`. Atomic matches like `components/ui/table.tsx:71` still
+        // appear in `sourceCandidates` so the consumer can render the full chain.
+        const candidates = collectSourceCandidates(el, skipSet.current, route);
+        const best = candidates[0];
+        const debugFile = best?.file || "";
         setState({
             ...EMPTY_STATE,
             selectedElement: el,
@@ -257,6 +396,7 @@ export function useElementPicker(options = {}) {
             componentLabel: getReactSourceLabel(names),
             componentChain: names,
             sourceFile: debugFile,
+            sourceCandidates: candidates,
             pageRoute: route,
             tag: el.tagName.toLowerCase(),
             styles: getKeyStyles(el),
@@ -264,29 +404,26 @@ export function useElementPicker(options = {}) {
             hoveredSelector: "",
         });
         (async () => {
-            // If we already have an accurate debug source, skip the grep resolver.
-            if (!debugFile) {
+            // Grep fallback for any component name that didn't get a debug source.
+            // We *augment* the candidate list rather than replacing it.
+            if (candidates.length === 0) {
                 const ordered = [
                     ...components.filter((c) => !WRAPPER_PATTERNS.test(c.name)),
                     ...components.filter((c) => WRAPPER_PATTERNS.test(c.name)),
                 ];
-                let resolved = "";
+                const resolved = [];
                 for (const comp of ordered) {
-                    if (comp.debugSource?.fileName) {
-                        resolved = formatDebugSource(comp.debugSource);
-                        break;
-                    }
                     const file = await resolveComponentFile(comp.name, serverUrl);
-                    if (file) {
-                        resolved = file;
-                        break;
+                    if (file && isLikelyProjectFile(file)) {
+                        resolved.push({ name: comp.name, file, score: scoreSource(comp.name, file, route) });
                     }
                 }
-                // Always exit the "resolving…" state, even if nothing was found.
-                // Using a sentinel so the UI can render a clear message.
+                resolved.sort((a, b) => b.score - a.score);
+                const bestGrep = resolved[0];
                 setState((s) => ({
                     ...s,
-                    sourceFile: resolved || UNRESOLVED_SENTINEL,
+                    sourceFile: bestGrep?.file || UNRESOLVED_SENTINEL,
+                    sourceCandidates: resolved,
                 }));
             }
             if (route) {
