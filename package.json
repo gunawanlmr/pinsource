@@ -1,6 +1,6 @@
 {
   "name": "pinsource",
-  "version": "0.1.0",
+  "version": "0.3.1",
   "description": "Pin any UI element in your running web app to its source file. A floating in-browser devtool that resolves the React/Vite/Next component, file path, and route — then copies a structured reference block.",
   "license": "MIT",
   "type": "module",
@@ -17,8 +17,18 @@
       "import": "./dist/loader.js"
     },
     "./server": "./server/index.mjs",
-    "./next-route": "./server/next-route.mjs",
-    "./vite-plugin": "./server/vite-plugin.mjs"
+    "./next-route": {
+      "types": "./server/next-route.d.ts",
+      "import": "./server/next-route.mjs",
+      "require": "./server/next-route.mjs",
+      "default": "./server/next-route.mjs"
+    },
+    "./vite-plugin": {
+      "types": "./server/vite-plugin.d.ts",
+      "import": "./server/vite-plugin.mjs",
+      "require": "./server/vite-plugin.mjs",
+      "default": "./server/vite-plugin.mjs"
+    }
   },
   "bin": {
     "pinsource-server": "./server/index.mjs"

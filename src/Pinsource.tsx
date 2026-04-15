@@ -1,10 +1,75 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { captureElement, type ScreenshotResult } from "./screenshot";
 import { UNRESOLVED_SENTINEL, useElementPicker } from "./use-element-picker";
 import type { DevToolsOptions, PickedElement } from "./types";
+
+/**
+ * Create (once) a host container attached directly to <body> so pinsource is
+ * never trapped inside another element's stacking context. Modals from the
+ * host app typically portal into <body> too, but because our host mounts
+ * *after* any app modal is inserted (and persists), and we also opt into the
+ * CSS top-layer via `popover`, we consistently sit above everything.
+ *
+ * Falls back to null during SSR.
+ */
+function usePortalHost(): HTMLElement | null {
+  const [host, setHost] = useState<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const existing = document.getElementById("pinsource-host");
+    if (existing instanceof HTMLElement) {
+      setHost(existing);
+      return;
+    }
+    const el = document.createElement("div");
+    el.id = "pinsource-host";
+    // Top-layer opt-in (Chromium 114+, Safari 17+, Firefox 125+). Any browser
+    // that doesn't support `popover` ignores the attribute — we still win on
+    // z-index because we're attached to <body>.
+    try {
+      el.setAttribute("popover", "manual");
+    } catch {
+      // SVG elements etc. — not relevant for a div, but cheap to guard.
+    }
+    // Reset styles popover applies (it defaults to inset:0, which would cover
+    // the whole page). We want a zero-footprint host that only sizes to its
+    // children.
+    el.style.position = "fixed";
+    el.style.inset = "auto";
+    el.style.width = "0";
+    el.style.height = "0";
+    el.style.margin = "0";
+    el.style.padding = "0";
+    el.style.border = "0";
+    el.style.background = "transparent";
+    el.style.overflow = "visible";
+    // Host itself is pointer-events: none — individual children re-enable it.
+    // This means clicks on the transparent host pass through to the app.
+    el.style.pointerEvents = "none";
+    document.body.appendChild(el);
+    // Show the popover so it enters the top layer. Guarded because the API
+    // is new and throws on some engines.
+    try {
+      (el as unknown as { showPopover?: () => void }).showPopover?.();
+    } catch {
+      // not in top layer — z-index still keeps us on top in every
+      // pre-popover browser.
+    }
+    setHost(el);
+    return () => {
+      // Keep the host across re-mounts (StrictMode, fast-refresh). We only
+      // remove it if nothing else is using it.
+      if (el.childNodes.length === 0) el.remove();
+    };
+  }, []);
+
+  return host;
+}
 
 /**
  * Build an AI-ready prompt block. Claude (or any LLM agent) can paste this
@@ -208,6 +273,9 @@ const styles = {
   root: {
     position: "fixed" as const,
     zIndex: 2147483647,
+    // Host container is pointer-events:none so transparent areas pass clicks
+    // through to the app. Re-enable on our actual UI so buttons still work.
+    pointerEvents: "auto" as const,
     fontFamily:
       '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
     fontSize: 12,
@@ -462,6 +530,7 @@ function Inner({
   );
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
   const picker = useElementPicker(pickerOptions);
+  const portalHost = usePortalHost();
 
   const resolvedSourceFile = picker.sourceFile === UNRESOLVED_SENTINEL ? "" : picker.sourceFile;
   const sourceFileState: "resolving" | "found" | "unresolved" =
@@ -564,7 +633,11 @@ function Inner({
     }
   }, [picker.active, picker.selectedElement]);
 
-  return (
+  // Portal host isn't ready until after first client effect (SSR guard).
+  // Render nothing on the server / first paint — avoids hydration mismatch.
+  if (!portalHost) return null;
+
+  const tree = (
     <>
       <style>{`
         @keyframes pinsource-pop {
@@ -930,4 +1003,6 @@ function Inner({
       </div>
     </>
   );
+
+  return createPortal(tree, portalHost);
 }

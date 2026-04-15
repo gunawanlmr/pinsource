@@ -4,7 +4,7 @@
  * Setup (App Router):
  *
  *   // app/api/__pinsource/route.ts
- *   export { POST } from "pinsource/next-route";
+ *   export { POST, runtime, dynamic } from "pinsource/next-route";
  *
  * That's the whole integration. Dev-only guard prevents the route from
  * running in production builds.
@@ -18,6 +18,13 @@
  */
 import { DEFAULT_DIRS, handleResolve } from "./resolver.mjs";
 
+// Pin to Node.js runtime — the resolver shells out via `child_process`, which
+// isn't available on the Edge runtime. Some Next configurations default route
+// handlers to Edge; re-exporting this from the user's route.ts forces Node.
+export const runtime = "nodejs";
+// Disable caching so probes and repeated lookups always hit the handler.
+export const dynamic = "force-dynamic";
+
 function cwd() {
   return process.env.PINSOURCE_CWD || process.cwd();
 }
@@ -30,6 +37,21 @@ function dirs() {
 
 function isProduction() {
   return process.env.NODE_ENV === "production";
+}
+
+// Health check — lets users verify the route is mounted by hitting it in a
+// browser tab, and lets the client-side resolver quickly probe availability.
+export async function GET() {
+  if (isProduction()) {
+    return new Response(JSON.stringify({ ok: false, reason: "production" }), {
+      status: 403,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  return new Response(
+    JSON.stringify({ ok: true, service: "pinsource", runtime: "nodejs" }),
+    { status: 200, headers: { "Content-Type": "application/json" } },
+  );
 }
 
 export async function POST(request) {

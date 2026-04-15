@@ -19,16 +19,20 @@ npm install --save-dev pinsource
 
 Add two small files. **That's the entire setup.**
 
+**1.** Create the API route. The extra re-exports (`runtime`, `dynamic`) pin the handler to Node.js and disable caching — both required for the resolver to work:
+
 ```ts
 // app/api/__pinsource/route.ts
-export { POST } from "pinsource/next-route";
+export { POST, GET, runtime, dynamic } from "pinsource/next-route";
 ```
+
+**2.** Mount the devtools loader in your root layout. `PinsourceLoader` renders nothing in production builds, so it's safe to leave in the tree:
 
 ```tsx
 // app/layout.tsx
 import PinsourceLoader from "pinsource/loader";
 
-export default function RootLayout({ children }) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html>
       <body>
@@ -40,7 +44,15 @@ export default function RootLayout({ children }) {
 }
 ```
 
-Run `next dev`, open your app, look for the floating button in the bottom-right corner.
+**3.** Run `next dev` and open your app. Look for the floating button in the bottom-right corner.
+
+**Verify the API route is mounted.** Open `http://localhost:3000/api/__pinsource` in a browser — you should see:
+
+```json
+{ "ok": true, "service": "pinsource", "runtime": "nodejs" }
+```
+
+If you get a 404, the route file is in the wrong place. If you get a 500, check your server logs — the most common cause is the route accidentally running on the Edge runtime (make sure you re-exported `runtime` as shown above).
 
 ### Vite
 
@@ -73,9 +85,25 @@ import PinsourceLoader from "pinsource/loader";
 ```ts
 // pages/api/__pinsource.ts
 export { default } from "pinsource/next-route";
+
+export const config = { api: { bodyParser: true } };
 ```
 
-Then mount `<PinsourceLoader />` in `_app.tsx`.
+Then mount `<PinsourceLoader />` in `_app.tsx`:
+
+```tsx
+// pages/_app.tsx
+import PinsourceLoader from "pinsource/loader";
+
+export default function App({ Component, pageProps }) {
+  return (
+    <>
+      <Component {...pageProps} />
+      <PinsourceLoader />
+    </>
+  );
+}
+```
 
 ### CRA, Webpack, Remix, anything else
 
@@ -194,6 +222,46 @@ On the first pick, the panel probes these endpoints in parallel and caches the w
 3. `http://localhost:9101/resolve` (standalone server)
 
 You never have to set a URL unless you want to override it.
+
+---
+
+## Troubleshooting
+
+### Next.js: "source file: not found"
+
+The panel picks elements but the **Source file** card shows `not found`.
+
+1. **Verify the route is mounted.** Open `http://localhost:3000/api/__pinsource` — you should get a `{ ok: true }` JSON response. If 404, the file is in the wrong place (should be `app/api/__pinsource/route.ts` for App Router, `pages/api/__pinsource.ts` for Pages Router).
+2. **Verify the runtime.** Open your browser DevTools → Network tab → pick an element. Find the `__pinsource` request. If the response is 500 and the server log says `"child_process" is not supported in the Edge Runtime`, your `route.ts` is missing `export { runtime } from "pinsource/next-route"` — add it.
+3. **Check `NODE_ENV`.** The route returns 403 in production. `next dev` runs in development by default; make sure you haven't set `NODE_ENV=production` in `.env.local`.
+4. **Fall back to the standalone server.** Run `npx pinsource-server` in a second terminal — it binds to `localhost:9101` and works regardless of framework. The client auto-detects it.
+
+### Vite: devtools show but "not found"
+
+Make sure the plugin is registered in `vite.config.ts` and that you're running `vite dev` (not preview or build). The plugin is `apply: "serve"` only.
+
+### TypeScript error: "Cannot find module 'pinsource/next-route'"
+
+Update to `pinsource@0.3+` — earlier versions shipped the subpath export without type declarations. If already on latest, make sure your `tsconfig.json` has `"moduleResolution": "bundler"` or `"node16"` so subpath exports are honored.
+
+### Checking the resolver directly
+
+```bash
+# Health check
+curl http://localhost:3000/api/__pinsource
+
+# Try to resolve a component
+curl -X POST http://localhost:3000/api/__pinsource \
+  -H 'Content-Type: application/json' \
+  -d '{"kind":"component","name":"ProductCard"}'
+
+# Try to resolve a route
+curl -X POST http://localhost:3000/api/__pinsource \
+  -H 'Content-Type: application/json' \
+  -d '{"kind":"page","route":"/dashboard"}'
+```
+
+Each should return `{"file":"...","line":N}` or an empty `{}` if not found.
 
 ---
 

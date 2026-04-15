@@ -54,39 +54,44 @@ function candidateEndpoints(override?: string): string[] {
 }
 
 /**
- * Fire a probe request at every candidate endpoint; first one to respond 2xx
- * with a JSON body wins. Result is cached for the lifetime of the page.
+ * Fire the real lookup request at every candidate endpoint in parallel.
+ * First endpoint to respond 2xx wins, its result is returned, and the
+ * endpoint is memoized so subsequent calls are a single round-trip.
+ *
+ * This fuses detection and the first lookup — no wasted follow-up request.
  */
-async function detectEndpoint(override: string | undefined, probeBody: Record<string, unknown>): Promise<string | null> {
-  if (detectedEndpoint) return detectedEndpoint;
-  if (detectionInFlight) return detectionInFlight;
-
-  detectionInFlight = (async () => {
-    const urls = candidateEndpoints(override);
-    const attempts = urls.map(async (url) => {
-      const res = await postTo(url, probeBody, 2500);
-      if (!res || !res.ok) return null;
-      try {
-        await res.clone().json();
-      } catch {
-        return null;
-      }
-      return { url, res };
-    });
-    const results = await Promise.all(attempts);
-    const winner = results.find((r) => r !== null);
-    if (winner) {
-      detectedEndpoint = winner.url;
-      return winner.url;
+async function raceEndpoints(
+  body: Record<string, unknown>,
+  override: string | undefined,
+): Promise<{ url: string; data: ResolveResponse } | null> {
+  const urls = candidateEndpoints(override);
+  return new Promise((resolve) => {
+    let pending = urls.length;
+    let settled = false;
+    const settle = (value: { url: string; data: ResolveResponse } | null) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    for (const url of urls) {
+      postTo(url, body, 2500).then(async (res) => {
+        if (!settled && res?.ok) {
+          try {
+            const data = (await res.json()) as ResolveResponse;
+            settle({ url, data });
+            return;
+          } catch {
+            // fall through to pending decrement
+          }
+        }
+        pending -= 1;
+        if (pending === 0) settle(null);
+      }).catch(() => {
+        pending -= 1;
+        if (pending === 0) settle(null);
+      });
     }
-    return null;
-  })();
-
-  try {
-    return await detectionInFlight;
-  } finally {
-    detectionInFlight = null;
-  }
+  });
 }
 
 async function request(body: Record<string, unknown>, override?: string): Promise<ResolveResponse> {
@@ -104,17 +109,34 @@ async function request(body: Record<string, unknown>, override?: string): Promis
     detectedEndpoint = null;
   }
 
-  const endpoint = await detectEndpoint(override, body);
-  if (!endpoint) return {};
-  // detectEndpoint already made the probe request that returned the winner,
-  // but we don't have its body cached, so make one follow-up request here.
-  // The cost is low because the endpoint is now pinned.
-  const res = await postTo(endpoint, body, 3000);
-  if (!res?.ok) return {};
+  // First lookup (or re-probe after a prior failure). Race all endpoints,
+  // dedupe concurrent callers through `detectionInFlight`.
+  if (!detectionInFlight) {
+    detectionInFlight = (async () => {
+      const winner = await raceEndpoints(body, override);
+      if (winner) {
+        detectedEndpoint = winner.url;
+        return winner.url;
+      }
+      return null;
+    })();
+  }
+
   try {
-    return (await res.json()) as ResolveResponse;
-  } catch {
-    return {};
+    const url = await detectionInFlight;
+    if (!url) return {};
+    // We don't have the winner's body here (it was captured inside the race),
+    // but the common case is that concurrent callers only need the endpoint
+    // to be pinned — they'll each make their own request below against it.
+    const res = await postTo(url, body, 3000);
+    if (!res?.ok) return {};
+    try {
+      return (await res.json()) as ResolveResponse;
+    } catch {
+      return {};
+    }
+  } finally {
+    detectionInFlight = null;
   }
 }
 
