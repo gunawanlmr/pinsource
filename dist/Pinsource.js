@@ -3,6 +3,7 @@ import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-run
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { captureElement } from "./screenshot";
+import { isBackendConnected } from "./resolver";
 import { UNRESOLVED_SENTINEL, useElementPicker } from "./use-element-picker";
 /**
  * Create (once) a host container attached directly to <body> so pinsource is
@@ -81,7 +82,7 @@ function formatForCopy(p) {
     const componentName = p.componentLabel.replace(/[<>/\s]/g, "") || "(unknown)";
     const primary = p.sourceFile
         ? `@${p.sourceFile}`
-        : "(source file unresolved — start the devtools server: `npx pinsource-server`)";
+        : "(source file unresolved — run `npx pinsource init` then `npm run dev`)";
     const page = p.pageFile ? `@${p.pageFile}` : "(unresolved)";
     const refs = [];
     if (p.sourceFile)
@@ -456,7 +457,7 @@ function cornerToPos(corner) {
     }
 }
 export default function Pinsource(props = {}) {
-    const { shouldRender, defaultCorner = "top-left", ...pickerOptions } = props;
+    const { shouldRender, defaultCorner = "bottom-right", ...pickerOptions } = props;
     const enabled = shouldRender ? shouldRender() : process.env.NODE_ENV !== "production";
     if (!enabled)
         return null;
@@ -658,7 +659,7 @@ function Inner({ defaultCorner, pickerOptions, }) {
                                                     gap: 4,
                                                     fontSize: 10.5,
                                                     color: "#6b7280",
-                                                }, children: [_jsx("span", { children: "or press" }), _jsx("span", { style: styles.kbd, children: "\u2318" }), _jsx("span", { style: styles.kbd, children: "Shift" }), _jsx("span", { style: styles.kbd, children: "C" })] })] })), picker.active && !hasSelection && (_jsxs("div", { style: styles.emptyState, children: [_jsx("div", { style: { color: "#22c55e", fontWeight: 600, marginBottom: 6 }, children: "Picking\u2026" }), _jsxs("div", { style: { fontSize: 11 }, children: ["Hover to highlight, click to select. Press ", _jsx("span", { style: styles.kbd, children: "Esc" }), " to cancel."] })] })), hasSelection && (_jsxs(_Fragment, { children: [_jsxs("div", { style: styles.card, children: [_jsx("div", { style: styles.label, children: "Component" }), _jsx("div", { style: { ...styles.valueMono, fontWeight: 600, color: "#f3f4f6" }, children: picker.componentLabel || "(unknown)" })] }), _jsxs("div", { style: styles.card, children: [_jsx("div", { style: styles.label, children: "Source file" }), _jsxs("div", { style: styles.valueMono, children: [sourceFileState === "found" && resolvedSourceFile, sourceFileState === "resolving" && (_jsx("span", { style: { color: "#6b7280", fontStyle: "italic" }, children: "resolving\u2026" })), sourceFileState === "unresolved" && (_jsxs("span", { style: { color: "#f59e0b" }, children: ["not found \u2014", " ", _jsxs("span", { style: { color: "#6b7280" }, children: ["is the server running? (", _jsx("code", { style: { color: "#9ca3af" }, children: "npx pinsource-server" }), ")"] })] }))] })] }), _jsxs("div", { style: styles.card, children: [_jsx("div", { style: styles.label, children: "Page" }), _jsx("div", { style: styles.valueMono, children: picker.pageFile || picker.pageRoute || "/" })] }), picker.componentChain.length > 1 && (_jsx(CollapsibleCard, { label: "Ancestor chain", count: picker.componentChain.length, children: _jsx("div", { style: styles.chainRow, children: picker.componentChain.join(" › ") }) }))] }))] }), hasSelection && (_jsxs("div", { style: styles.panelFooter, children: [_jsxs("div", { style: { display: "flex", gap: 4, alignItems: "center" }, children: [_jsxs("button", { "data-secondary-action": true, onClick: () => handleCopy("compact"), style: {
+                                                }, children: [_jsx("span", { children: "or press" }), _jsx("span", { style: styles.kbd, children: "\u2318" }), _jsx("span", { style: styles.kbd, children: "Shift" }), _jsx("span", { style: styles.kbd, children: "C" })] })] })), picker.active && !hasSelection && (_jsxs("div", { style: styles.emptyState, children: [_jsx("div", { style: { color: "#22c55e", fontWeight: 600, marginBottom: 6 }, children: "Picking\u2026" }), _jsxs("div", { style: { fontSize: 11 }, children: ["Hover to highlight, click to select. Press ", _jsx("span", { style: styles.kbd, children: "Esc" }), " to cancel."] })] })), hasSelection && (_jsxs(_Fragment, { children: [_jsxs("div", { style: styles.card, children: [_jsx("div", { style: styles.label, children: "Component" }), _jsx("div", { style: { ...styles.valueMono, fontWeight: 600, color: "#f3f4f6" }, children: picker.componentLabel || "(unknown)" })] }), _jsxs("div", { style: styles.card, children: [_jsx("div", { style: styles.label, children: "Source file" }), _jsxs("div", { style: styles.valueMono, children: [sourceFileState === "found" && resolvedSourceFile, sourceFileState === "resolving" && (_jsx("span", { style: { color: "#6b7280", fontStyle: "italic" }, children: "resolving\u2026" })), sourceFileState === "unresolved" && (isBackendConnected() ? (_jsxs("span", { style: { color: "#f59e0b" }, children: ["no match", " ", _jsxs("span", { style: { color: "#6b7280" }, children: ["\u2014 resolver couldn't locate", " ", _jsx("code", { style: { color: "#9ca3af" }, children: picker.componentChain[0] || picker.componentLabel.replace(/[<>/\s]/g, "") || "component" }), " ", "in your source dirs"] })] })) : (_jsxs("span", { style: { color: "#f59e0b" }, children: ["resolver unreachable", " ", _jsxs("span", { style: { color: "#6b7280" }, children: ["\u2014 run", " ", _jsx("code", { style: { color: "#9ca3af" }, children: "npx pinsource init" }), " ", "then", " ", _jsx("code", { style: { color: "#9ca3af" }, children: "npm run dev" })] })] })))] })] }), _jsxs("div", { style: styles.card, children: [_jsx("div", { style: styles.label, children: "Page" }), _jsx("div", { style: styles.valueMono, children: picker.pageFile || picker.pageRoute || "/" })] }), picker.componentChain.length > 1 && (_jsx(CollapsibleCard, { label: "Ancestor chain", count: picker.componentChain.length, children: _jsx("div", { style: styles.chainRow, children: picker.componentChain.join(" › ") }) }))] }))] }), hasSelection && (_jsxs("div", { style: styles.panelFooter, children: [_jsxs("div", { style: { display: "flex", gap: 4, alignItems: "center" }, children: [_jsxs("button", { "data-secondary-action": true, onClick: () => handleCopy("compact"), style: {
                                                     ...styles.secondaryAction,
                                                     ...(copied === "compact" ? styles.secondaryActionSuccess : {}),
                                                     flex: 1,

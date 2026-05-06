@@ -9,6 +9,12 @@
  * memoizes the one that responds successfully. Subsequent requests hit only
  * that endpoint, so normal operation is a single network round-trip.
  */
+/**
+ * Whether the client has successfully reached any backend in this session.
+ * Lets the UI distinguish "no backend configured / unreachable" from
+ * "backend returned no match for this component".
+ */
+export declare function isBackendConnected(): boolean;
 export declare function resolveComponentFile(name: string, override?: string): Promise<string>;
 export declare function resolvePageFile(route: string, override?: string): Promise<string>;
 //# sourceMappingURL=resolver.d.ts.map

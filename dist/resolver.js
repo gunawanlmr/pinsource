@@ -134,6 +134,14 @@ async function request(body, override) {
         detectionInFlight = null;
     }
 }
+/**
+ * Whether the client has successfully reached any backend in this session.
+ * Lets the UI distinguish "no backend configured / unreachable" from
+ * "backend returned no match for this component".
+ */
+export function isBackendConnected() {
+    return detectedEndpoint !== null;
+}
 export async function resolveComponentFile(name, override) {
     const k = key("component", name);
     if (cache.has(k))
