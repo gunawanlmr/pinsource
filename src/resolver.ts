@@ -140,6 +140,15 @@ async function request(body: Record<string, unknown>, override?: string): Promis
   }
 }
 
+/**
+ * Whether the client has successfully reached any backend in this session.
+ * Lets the UI distinguish "no backend configured / unreachable" from
+ * "backend returned no match for this component".
+ */
+export function isBackendConnected(): boolean {
+  return detectedEndpoint !== null;
+}
+
 export async function resolveComponentFile(name: string, override?: string): Promise<string> {
   const k = key("component", name);
   if (cache.has(k)) return cache.get(k)!;
