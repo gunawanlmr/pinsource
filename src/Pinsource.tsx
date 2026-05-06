@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { captureElement, type ScreenshotResult } from "./screenshot";
+import { isBackendConnected } from "./resolver";
 import { UNRESOLVED_SENTINEL, useElementPicker } from "./use-element-picker";
 import type { DevToolsOptions, PickedElement } from "./types";
 
@@ -83,7 +84,7 @@ function formatForCopy(p: PickedElement): string {
   const componentName = p.componentLabel.replace(/[<>/\s]/g, "") || "(unknown)";
   const primary = p.sourceFile
     ? `@${p.sourceFile}`
-    : "(source file unresolved — start the devtools server: `npx pinsource-server`)";
+    : "(source file unresolved — run `npx pinsource init` then `npm run dev`)";
   const page = p.pageFile ? `@${p.pageFile}` : "(unresolved)";
 
   const refs: string[] = [];
@@ -542,7 +543,7 @@ const styles = {
 };
 
 interface DevToolsProps extends DevToolsOptions {
-  /** Default panel corner. Default: "top-left" */
+  /** Default panel corner. Default: "bottom-right" */
   defaultCorner?: "top-left" | "top-right" | "bottom-left" | "bottom-right";
 }
 
@@ -560,7 +561,7 @@ function cornerToPos(corner: DevToolsProps["defaultCorner"]) {
 }
 
 export default function Pinsource(props: DevToolsProps = {}) {
-  const { shouldRender, defaultCorner = "top-left", ...pickerOptions } = props;
+  const { shouldRender, defaultCorner = "bottom-right", ...pickerOptions } = props;
   const enabled = shouldRender ? shouldRender() : process.env.NODE_ENV !== "production";
   if (!enabled) return null;
   return <Inner defaultCorner={defaultCorner} pickerOptions={pickerOptions} />;
@@ -896,12 +897,28 @@ function Inner({
                         <span style={{ color: "#6b7280", fontStyle: "italic" }}>resolving…</span>
                       )}
                       {sourceFileState === "unresolved" && (
-                        <span style={{ color: "#f59e0b" }}>
-                          not found —{" "}
-                          <span style={{ color: "#6b7280" }}>
-                            is the server running? (<code style={{ color: "#9ca3af" }}>npx pinsource-server</code>)
+                        isBackendConnected() ? (
+                          <span style={{ color: "#f59e0b" }}>
+                            no match{" "}
+                            <span style={{ color: "#6b7280" }}>
+                              — resolver couldn&apos;t locate{" "}
+                              <code style={{ color: "#9ca3af" }}>
+                                {picker.componentChain[0] || picker.componentLabel.replace(/[<>/\s]/g, "") || "component"}
+                              </code>
+                              {" "}in your source dirs
+                            </span>
                           </span>
-                        </span>
+                        ) : (
+                          <span style={{ color: "#f59e0b" }}>
+                            resolver unreachable{" "}
+                            <span style={{ color: "#6b7280" }}>
+                              — run{" "}
+                              <code style={{ color: "#9ca3af" }}>npx pinsource init</code>
+                              {" "}then{" "}
+                              <code style={{ color: "#9ca3af" }}>npm run dev</code>
+                            </span>
+                          </span>
+                        )
                       )}
                     </div>
                   </div>
