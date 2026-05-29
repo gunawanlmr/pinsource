@@ -102,25 +102,29 @@ async function request(body, override) {
         detectedEndpoint = null;
     }
     // First lookup (or re-probe after a prior failure). Race all endpoints,
-    // dedupe concurrent callers through `detectionInFlight`.
+    // dedupe concurrent callers through `detectionInFlight`. The race already
+    // performed a real lookup, so the winner carries the resolved data — the
+    // caller that triggered detection reuses it directly instead of issuing a
+    // second request to the now-known endpoint.
+    const iTriggered = !detectionInFlight;
     if (!detectionInFlight) {
         detectionInFlight = (async () => {
             const winner = await raceEndpoints(body, override);
-            if (winner) {
+            if (winner)
                 detectedEndpoint = winner.url;
-                return winner.url;
-            }
-            return null;
+            return winner;
         })();
     }
     try {
-        const url = await detectionInFlight;
-        if (!url)
+        const winner = await detectionInFlight;
+        if (!winner)
             return {};
-        // We don't have the winner's body here (it was captured inside the race),
-        // but the common case is that concurrent callers only need the endpoint
-        // to be pinned — they'll each make their own request below against it.
-        const res = await postTo(url, body, 3000);
+        // The caller whose request seeded the race gets the race's own result —
+        // no extra round-trip. Concurrent callers (their body may differ) issue a
+        // single request against the now-pinned endpoint.
+        if (iTriggered)
+            return winner.data;
+        const res = await postTo(winner.url, body, 3000);
         if (!res?.ok)
             return {};
         try {
@@ -131,7 +135,8 @@ async function request(body, override) {
         }
     }
     finally {
-        detectionInFlight = null;
+        if (iTriggered)
+            detectionInFlight = null;
     }
 }
 /**

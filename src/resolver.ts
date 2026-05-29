@@ -23,7 +23,7 @@ interface ResolveResponse {
 
 const cache = new Map<string, string>();
 let detectedEndpoint: string | null = null;
-let detectionInFlight: Promise<string | null> | null = null;
+let detectionInFlight: Promise<{ url: string; data: ResolveResponse } | null> | null = null;
 
 function key(type: string, value: string) {
   return `${type}:${value}`;
@@ -110,25 +110,27 @@ async function request(body: Record<string, unknown>, override?: string): Promis
   }
 
   // First lookup (or re-probe after a prior failure). Race all endpoints,
-  // dedupe concurrent callers through `detectionInFlight`.
+  // dedupe concurrent callers through `detectionInFlight`. The race already
+  // performed a real lookup, so the winner carries the resolved data — the
+  // caller that triggered detection reuses it directly instead of issuing a
+  // second request to the now-known endpoint.
+  const iTriggered = !detectionInFlight;
   if (!detectionInFlight) {
     detectionInFlight = (async () => {
       const winner = await raceEndpoints(body, override);
-      if (winner) {
-        detectedEndpoint = winner.url;
-        return winner.url;
-      }
-      return null;
+      if (winner) detectedEndpoint = winner.url;
+      return winner;
     })();
   }
 
   try {
-    const url = await detectionInFlight;
-    if (!url) return {};
-    // We don't have the winner's body here (it was captured inside the race),
-    // but the common case is that concurrent callers only need the endpoint
-    // to be pinned — they'll each make their own request below against it.
-    const res = await postTo(url, body, 3000);
+    const winner = await detectionInFlight;
+    if (!winner) return {};
+    // The caller whose request seeded the race gets the race's own result —
+    // no extra round-trip. Concurrent callers (their body may differ) issue a
+    // single request against the now-pinned endpoint.
+    if (iTriggered) return winner.data;
+    const res = await postTo(winner.url, body, 3000);
     if (!res?.ok) return {};
     try {
       return (await res.json()) as ResolveResponse;
@@ -136,7 +138,7 @@ async function request(body: Record<string, unknown>, override?: string): Promis
       return {};
     }
   } finally {
-    detectionInFlight = null;
+    if (iTriggered) detectionInFlight = null;
   }
 }
 
