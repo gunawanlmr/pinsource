@@ -1,6 +1,6 @@
 {
   "name": "pinsource",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "description": "Pin any UI element in your running web app to its source file. A floating in-browser devtool that resolves the React/Vite/Next component, file path, and route — then copies a structured reference block.",
   "license": "MIT",
   "type": "module",

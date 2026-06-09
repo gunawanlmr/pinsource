@@ -148,16 +148,23 @@ function formatForCopy(p: PickedElement): string {
  *  - **Short and deterministic** — every field is a single line; missing
  *    fields are simply omitted (no "(unknown)" placeholders).
  *
+ * The block leads with what matters most: the resolved `file:line` and the
+ * named component tree (each parent with its own `file:line`). Redundant fields
+ * are dropped — the old `chain:` is fully subsumed by `parents:`, and the first
+ * `sources:` row always equalled `source:`. The DOM path is kept only as a
+ * last-resort hint and is already collapsed to leaf + semantic anchors upstream.
+ *
  * Example output:
  *
  * ```pinsource
  * component: TableCell
- * tag: td
  * route: /leaderboard
  * source: src/components/ui/table.tsx:71
  * page: app/leaderboard/page.tsx
- * chain: TableCell > TableRow > Table
- * dom: main > div.panel > table > tbody > tr > td.cell
+ * parents:
+ *   - TableRow: …/ui/table.tsx:48
+ *   - Table: …/ui/table.tsx:12
+ * dom: main > table > … > td.cell
  * ```
  */
 function formatCompactCopy(p: PickedElement): string {
@@ -166,29 +173,50 @@ function formatCompactCopy(p: PickedElement): string {
   if (p.tag && p.tag !== componentName.toLowerCase()) fields.push(`tag: ${p.tag}`);
   if (p.pageRoute) fields.push(`route: ${p.pageRoute}`);
 
-  // "source:" is the best-scored candidate (page-level when possible).
-  // "sources:" lists every level — so when the best pick is still too atomic,
-  // the consuming LLM can walk up to the composing component itself.
+  // The two highest-value lines: the resolved file:line for the picked element,
+  // and the page file it lives on. Everything else is fallback context.
   if (p.sourceFile) fields.push(`source: ${p.sourceFile}`);
   if (p.pageFile) fields.push(`page: ${p.pageFile}`);
 
+  // The named component tree with a file:line per level — the agent's grep
+  // fallback when the best pick is too atomic or slightly off. We skip the
+  // first candidate (it is `source:`) and the page file (it is `page:`) so no
+  // line repeats, then elide shared path prefixes to keep each row short.
   if (p.sourceCandidates && p.sourceCandidates.length > 1) {
-    // Cap at 4 to keep the block tight. Already sorted page-level → atomic.
     const rows = p.sourceCandidates
-      .slice(0, 4)
-      .map((c) => `  - ${c.name}: ${c.file}`);
-    fields.push("sources:");
-    fields.push(...rows);
+      .slice(1, 5)
+      .filter((c) => c.file !== p.pageFile)
+      .map((c) => `  - ${c.name}: ${elideCommonPrefix(c.file, p.sourceFile)}`);
+    if (rows.length > 0) {
+      fields.push("parents:");
+      fields.push(...rows);
+    }
   }
 
-  if (p.componentChain.length > 1) {
-    fields.push(`chain: ${p.componentChain.slice(0, 5).join(" > ")}`);
-  }
-  if (p.elementPath) fields.push(`dom: ${p.elementPath}`);
-  if (!p.sourceFile && p.componentChain.length > 0) {
-    fields.push(`hint: source unresolved — grep for ${p.componentChain[0]}`);
+  // DOM path is the weakest signal (already collapsed upstream); include it
+  // only when we have no resolved source to fall back on, plus a grep hint.
+  if (!p.sourceFile) {
+    if (p.elementPath) fields.push(`dom: ${p.elementPath}`);
+    if (p.componentChain.length > 0) {
+      fields.push(`hint: source unresolved — grep for ${p.componentChain[0]}`);
+    }
   }
   return ["```pinsource", ...fields, "```"].join("\n");
+}
+
+/**
+ * Replace the leading path segments a candidate file shares with the primary
+ * source with `…/`, so `app/(root)/trade/components/nav/Bar.tsx:9` shown next to
+ * a sibling under `app/(root)/trade/components/` collapses to `…/nav/Bar.tsx:9`.
+ * Keeps at least the final two segments so the row stays recognizable.
+ */
+function elideCommonPrefix(file: string, base: string): string {
+  if (!base) return file;
+  const a = file.split("/");
+  const b = base.split("/");
+  let i = 0;
+  while (i < a.length - 2 && i < b.length && a[i] === b[i]) i++;
+  return i > 0 ? `…/${a.slice(i).join("/")}` : file;
 }
 
 function CopyIcon({ copied, size = 14 }: { copied: boolean; size?: number }) {

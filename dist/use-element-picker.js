@@ -274,20 +274,52 @@ function getReactSourceLabel(names) {
 const NON_VISUAL_TAGS = new Set(["script", "style", "noscript", "head", "meta", "link", "title", "template"]);
 /** Marker written to `sourceFile` when resolution completes but finds nothing. */
 export const UNRESOLVED_SENTINEL = "__pinsource_unresolved__";
+/** Tags/attrs that anchor a DOM path to something an agent can reason about. */
+const SEMANTIC_TAGS = new Set([
+    "main", "nav", "header", "footer", "aside", "section", "article",
+    "form", "table", "ul", "ol", "dialog", "button", "a", "input",
+]);
+function isSemanticAnchor(el) {
+    return (!!el.id ||
+        el.hasAttribute("role") ||
+        el.hasAttribute("data-testid") ||
+        SEMANTIC_TAGS.has(el.tagName.toLowerCase()));
+}
+function selectorFor(el) {
+    let selector = el.tagName.toLowerCase();
+    if (el.id) {
+        selector += `#${el.id}`;
+    }
+    else if (typeof el.className === "string") {
+        const firstClass = el.className.trim().split(/\s+/)[0];
+        if (firstClass && !firstClass.startsWith("__"))
+            selector += `.${firstClass}`;
+    }
+    return selector;
+}
+/**
+ * Compact DOM path: keeps the clicked leaf plus semantic ancestors
+ * (landmarks, ids, roles, interactive/structural tags) and collapses runs
+ * of plain wrapper `<div>`s to a single `…`. A deeply-nested utility-class
+ * chain like `div.no-scrollbar > div.flex > div.relative > button` carries
+ * almost no locating signal, so we drop it and keep what an agent can use.
+ */
 function getElementPath(el) {
     const parts = [];
     let current = el;
+    let collapsed = false;
+    let first = true;
     while (current && current !== document.body) {
-        let selector = current.tagName.toLowerCase();
-        if (current.id) {
-            selector += `#${current.id}`;
+        // Always keep the leaf; keep ancestors only when semantically meaningful.
+        if (first || isSemanticAnchor(current)) {
+            parts.unshift(selectorFor(current));
+            collapsed = false;
         }
-        else if (typeof current.className === "string") {
-            const firstClass = current.className.trim().split(/\s+/)[0];
-            if (firstClass && !firstClass.startsWith("__"))
-                selector += `.${firstClass}`;
+        else if (!collapsed) {
+            parts.unshift("…");
+            collapsed = true;
         }
-        parts.unshift(selector);
+        first = false;
         current = current.parentElement;
     }
     return parts.join(" > ");

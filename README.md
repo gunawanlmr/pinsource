@@ -46,7 +46,9 @@ tag: textarea
 route: /chat
 source: app/chat/components/ChatInput.tsx:14
 page: app/chat/page.tsx
-chain: ChatInput > ChatComposer > ChatSession
+parents:
+  - ChatComposer: …/components/ChatComposer.tsx:31
+  - ChatSession: …/components/ChatSession.tsx:8
 ```
 ````
 
