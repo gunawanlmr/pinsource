@@ -121,11 +121,28 @@ function getDebugSource(fiber) {
         return fiber._debugSource;
     return null;
 }
-function getFiberFromElement(el) {
+function readFiberKey(el) {
     const fiberKey = Object.keys(el).find((k) => k.startsWith("__reactFiber$") || k.startsWith("__reactInternalInstance$"));
     if (!fiberKey)
         return null;
     return el[fiberKey] ?? null;
+}
+/**
+ * Resolve the React fiber for a DOM node. Portal-based UI (Radix Dialog, Vaul
+ * sheets, Headless UI) often injects backdrop/overlay/wrapper nodes that carry
+ * no fiber of their own, so a direct read returns null and resolution collapses
+ * to "unresolved". When that happens we climb DOM ancestors (bounded) until we
+ * find a node React actually owns, so a click on a modal still resolves.
+ */
+function getFiberFromElement(el) {
+    let current = el;
+    for (let depth = 0; current && depth < 12; depth++) {
+        const fiber = readFiberKey(current);
+        if (fiber)
+            return fiber;
+        current = current.parentElement;
+    }
+    return null;
 }
 /**
  * Walk the fiber ancestor chain and collect each meaningful component along with
@@ -272,6 +289,66 @@ function getReactSourceLabel(names) {
     return `<${best} />`;
 }
 const NON_VISUAL_TAGS = new Set(["script", "style", "noscript", "head", "meta", "link", "title", "template"]);
+/**
+ * Backdrop / dimmer / overlay layers rendered by portal-based modal libs
+ * (Radix Dialog, Vaul sheets, Headless UI, react-modal, MUI). These sit on top
+ * of the modal content and intercept `elementFromPoint`, so a click resolves to
+ * the dimmer — which usually has no useful source — instead of the content the
+ * user actually pointed at. We look *underneath* them for the real target.
+ *
+ * Detection mixes explicit signatures with a structural fallback, because
+ * libraries vary: Vaul tags its overlay `data-vaul-overlay`, but Radix Dialog's
+ * overlay carries only `data-state` and an app-supplied className like
+ * `fixed inset-0 bg-black` — no "overlay" word to match on. So we also treat any
+ * near-full-viewport, fixed/absolute, childless-or-empty layer as a backdrop.
+ */
+function isOverlayLayer(el) {
+    // Explicit, high-confidence signatures.
+    const ds = el.dataset || {};
+    if ("vaulOverlay" in ds)
+        return true;
+    if (el.hasAttribute("data-radix-dialog-overlay"))
+        return true;
+    if (el.hasAttribute("data-overlay") || el.hasAttribute("data-backdrop"))
+        return true;
+    const cls = typeof el.className === "string" ? el.className.toLowerCase() : "";
+    if (/\b(backdrop|overlay|scrim|dimmer|modal-?(bg|background))\b/.test(cls))
+        return true;
+    // Structural fallback: a full-bleed fixed/absolute dimmer that has no real
+    // content of its own (Radix DialogOverlay, hand-rolled backdrops). Requiring
+    // "no element children" avoids mistaking a real fixed panel for a dimmer.
+    try {
+        const cs = getComputedStyle(el);
+        if (cs.position === "fixed" || cs.position === "absolute") {
+            const r = el.getBoundingClientRect();
+            const coversW = r.width >= window.innerWidth * 0.9;
+            const coversH = r.height >= window.innerHeight * 0.9;
+            if (coversW && coversH && el.childElementCount === 0)
+                return true;
+        }
+    }
+    catch {
+        // getComputedStyle can throw on detached nodes — ignore.
+    }
+    return false;
+}
+/**
+ * Topmost *content* element at a point, transparently skipping backdrop/overlay
+ * layers. Falls back to the plain hit when nothing better is underneath.
+ */
+function contentElementFromPoint(x, y) {
+    const stack = document.elementsFromPoint(x, y) || [];
+    for (const el of stack) {
+        if (!el || el.closest("[data-pinsource]"))
+            continue;
+        if (NON_VISUAL_TAGS.has(el.tagName.toLowerCase()))
+            continue;
+        if (isOverlayLayer(el))
+            continue;
+        return el;
+    }
+    return document.elementFromPoint(x, y);
+}
 /** Marker written to `sourceFile` when resolution completes but finds nothing. */
 export const UNRESOLVED_SENTINEL = "__pinsource_unresolved__";
 /** Tags/attrs that anchor a DOM path to something an agent can reason about. */
@@ -391,7 +468,7 @@ export function useElementPicker(options = {}) {
     const handleMouseMove = useCallback((e) => {
         if (!activeRef.current)
             return;
-        const el = document.elementFromPoint(e.clientX, e.clientY);
+        const el = contentElementFromPoint(e.clientX, e.clientY);
         if (!el || NON_VISUAL_TAGS.has(el.tagName.toLowerCase()) || isInsideDevtools(el))
             return;
         const rect = el.getBoundingClientRect();
@@ -408,7 +485,7 @@ export function useElementPicker(options = {}) {
             return;
         e.preventDefault();
         e.stopPropagation();
-        const el = document.elementFromPoint(e.clientX, e.clientY);
+        const el = contentElementFromPoint(e.clientX, e.clientY);
         if (!el || isInsideDevtools(el))
             return;
         const components = collectFiberComponents(el, skipSet.current);
