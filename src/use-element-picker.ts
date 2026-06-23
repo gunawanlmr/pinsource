@@ -541,13 +541,20 @@ export function useElementPicker(options: DevToolsOptions = {}) {
             ...components.filter((c) => !WRAPPER_PATTERNS.test(c.name)),
             ...components.filter((c) => WRAPPER_PATTERNS.test(c.name)),
           ];
-          const resolved: SourceCandidate[] = [];
-          for (const comp of ordered) {
-            const file = await resolveComponentFile(comp.name, serverUrl);
-            if (file && isLikelyProjectFile(file)) {
-              resolved.push({ name: comp.name, file, score: scoreSource(comp.name, file, route) });
-            }
-          }
+          // Resolve the whole chain concurrently rather than one await at a
+          // time — the per-name cache dedupes repeats and the resolver's
+          // circuit breaker makes the no-backend case a single shared probe,
+          // so this is bounded work that finishes in one round-trip's time.
+          const resolved = (
+            await Promise.all(
+              ordered.map(async (comp) => {
+                const file = await resolveComponentFile(comp.name, serverUrl);
+                return file && isLikelyProjectFile(file)
+                  ? { name: comp.name, file, score: scoreSource(comp.name, file, route) }
+                  : null;
+              }),
+            )
+          ).filter((c): c is SourceCandidate => c !== null);
           resolved.sort((a, b) => b.score - a.score);
           const bestGrep = resolved[0];
           setState((s) => ({

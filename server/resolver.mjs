@@ -10,7 +10,7 @@
  * All grep/find invocations are sandboxed to the configured `cwd` and search
  * dirs. Nothing leaves the machine.
  */
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 
@@ -37,7 +37,7 @@ function ripgrepPath() {
 // for a given tree state, so we memoize and invalidate by TTL. Dev edits that
 // move a definition are rare relative to pin clicks; a short TTL keeps it fresh
 // without re-grepping on every click.
-const CACHE_TTL_MS = 5000;
+const CACHE_TTL_MS = 15000;
 const _cache = new Map(); // key -> { value, at }
 
 function cacheGet(key) {
@@ -54,23 +54,48 @@ function cacheSet(key, value) {
   _cache.set(key, { value, at: Date.now() });
 }
 
+// Only the source extensions a React/Vite/Next component can live in.
+const SOURCE_GLOBS = ["*.tsx", "*.jsx", "*.ts", "*.js"];
+// Cap matches — the scorer only needs a handful of candidates, and an unbounded
+// scan of a common name across a monorepo is the slow path we want to avoid.
+const MAX_MATCHES = 200;
+
+// execFileSync (no shell) is faster and safer than execSync: it skips the
+// `/bin/sh -c` parse + the per-arg quoting we used to hand-build, and can't be
+// tripped up by shell metacharacters. ripgrep/grep exit 1 on "no matches",
+// which surfaces as a thrown error with `.status === 1` — we treat that as an
+// empty (but successful) result so callers can cache the negative.
+const EXEC_OPTS = {
+  encoding: "utf8",
+  timeout: 4000,
+  maxBuffer: 10 * 1024 * 1024,
+  stdio: ["ignore", "pipe", "ignore"], // discard stderr instead of `2>/dev/null`
+};
+
 function runSearch({ pattern, dirs, cwd }) {
-  const dirArgs = dirs.map((d) => JSON.stringify(d)).join(" ");
   const rg = ripgrepPath();
-  if (rg) {
-    const globs = ["*.tsx", "*.jsx", "*.ts", "*.js"].map((g) => `-g ${JSON.stringify(g)}`).join(" ");
-    const excludes = EXCLUDED_DIRS.map((d) => `-g ${JSON.stringify(`!${d}/`)}`).join(" ");
-    return execSync(
-      `${JSON.stringify(rg)} --no-heading --line-number --color never ${globs} ${excludes} -e ${JSON.stringify(pattern)} ${dirArgs} 2>/dev/null`,
-      { cwd, encoding: "utf8", timeout: 4000, maxBuffer: 10 * 1024 * 1024 },
-    ).trim();
+  // Only hand the searcher dirs that actually exist — a missing `handlers/` or
+  // `pages/` would otherwise cost a stat + warning per absent path. Fall back to
+  // the full list if none resolve (lets the searcher report its own error).
+  const present = dirs.filter((d) => existsSync(resolvePath(cwd, d)));
+  const searchDirs = present.length ? present : dirs;
+  try {
+    if (rg) {
+      const args = ["--no-heading", "--line-number", "--color", "never", "-m", String(MAX_MATCHES)];
+      for (const g of SOURCE_GLOBS) args.push("-g", g);
+      for (const d of EXCLUDED_DIRS) args.push("-g", `!${d}/`);
+      args.push("-e", pattern, ...searchDirs);
+      return execFileSync(rg, args, { ...EXEC_OPTS, cwd }).trim();
+    }
+    const args = ["-rnE", pattern];
+    for (const g of SOURCE_GLOBS) args.push(`--include=${g}`);
+    for (const d of EXCLUDED_DIRS) args.push(`--exclude-dir=${d}`);
+    args.push(...searchDirs);
+    return execFileSync("grep", args, { ...EXEC_OPTS, cwd }).trim();
+  } catch (err) {
+    if (err && err.status === 1) return ""; // no matches — a normal, cacheable result
+    throw err;
   }
-  const includes = ['--include="*.tsx"', '--include="*.jsx"', '--include="*.ts"', '--include="*.js"'].join(" ");
-  const excludeDirs = EXCLUDED_DIRS.map((d) => `--exclude-dir=${d}`).join(" ");
-  return execSync(
-    `grep -rnE ${JSON.stringify(pattern)} ${includes} ${excludeDirs} ${dirArgs} 2>/dev/null`,
-    { cwd, encoding: "utf8", timeout: 4000, maxBuffer: 10 * 1024 * 1024 },
-  ).trim();
 }
 
 export function resolveComponent({ name, cwd, dirs }) {
